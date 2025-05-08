@@ -22,8 +22,50 @@
 #include "utils.h"
 #include "program_options_utils.hpp"
 #include "index_factory.h"
+#include "grid_graph.h"
 
 namespace po = boost::program_options;
+
+template <typename T>
+std::unique_ptr<diskann::GridGraph> init_grid_graph(const std::string &index_path) {
+    auto grid_graph = std::make_unique<diskann::GridGraph>();
+    
+    // 从索引中读取数据点
+    T *data = nullptr;
+    size_t num_points, data_dim, aligned_dim;
+    std::string data_file = "data/sift/sift_base.fbin";
+    diskann::load_aligned_bin<T>(data_file, data, num_points, data_dim, aligned_dim);
+
+    // 统计每个维度的最小值和最大值
+    std::vector<T> min_vals(aligned_dim, std::numeric_limits<T>::max());
+    std::vector<T> max_vals(aligned_dim, std::numeric_limits<T>::lowest());
+    
+    for (size_t i = 0; i < num_points; i++) {
+        for (size_t j = 0; j < aligned_dim; j++) {
+            T val = data[i * aligned_dim + j];
+            min_vals[j] = std::min(min_vals[j], val);
+            max_vals[j] = std::max(max_vals[j], val);
+        }
+    }
+
+    // 打印统计结果
+    // std::cout << "维度统计信息：" << std::endl;
+    // for (size_t j = 0; j < aligned_dim; j++) {
+    //     std::cout << "维度 " << j << ": 最小值=" << (int)min_vals[j] 
+    //               << ", 最大值=" << (int)max_vals[j] << std::endl;
+    // }
+    // std::cout << std::endl;
+
+    grid_graph->sample(data, num_points, sizeof(T) * aligned_dim);
+
+    // 使用采样的点构建grid graph
+    grid_graph->buildGraph();
+
+    diskann::aligned_free(data);
+    bool connected = grid_graph->isConnected();
+    std::cout << "Grid graph is " << (connected ? "connected" : "not connected") << std::endl;
+    return grid_graph;
+}
 
 template <typename T, typename LabelT = uint32_t>
 int search_memory_index(diskann::Metric &metric, const std::string &index_path, const std::string &result_path_prefix,
@@ -39,6 +81,9 @@ int search_memory_index(diskann::Metric &metric, const std::string &index_path, 
     float *gt_dists = nullptr;
     size_t query_num, query_dim, query_aligned_dim, gt_num, gt_dim;
     diskann::load_aligned_bin<T>(query_file, query, query_num, query_dim, query_aligned_dim);
+
+
+    auto grid_graph = init_grid_graph<T>(index_path);
 
     bool calc_recall_flag = false;
     if (truthset_file != std::string("null") && file_exists(truthset_file))
@@ -163,47 +208,16 @@ int search_memory_index(diskann::Metric &metric, const std::string &index_path, 
         for (int64_t i = 0; i < (int64_t)query_num; i++)
         {
             auto qs = std::chrono::high_resolution_clock::now();
-            if (filtered_search && !tags)
-            {
-                std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[i];
 
-                auto retval = index->search_with_filters(query + i * query_aligned_dim, raw_filter, recall_at, L,
-                                                         query_result_ids[test_id].data() + i * recall_at,
-                                                         query_result_dists[test_id].data() + i * recall_at);
-                cmp_stats[i] = retval.second;
-            }
-            else if (metric == diskann::FAST_L2)
-            {
-                index->search_with_optimized_layout(query + i * query_aligned_dim, recall_at, L,
-                                                    query_result_ids[test_id].data() + i * recall_at);
-            }
-            else if (tags)
-            {
-                if (!filtered_search)
-                {
-                    index->search_with_tags(query + i * query_aligned_dim, recall_at, L,
-                                            query_result_tags.data() + i * recall_at, nullptr, res);
-                }
-                else
-                {
-                    std::string raw_filter = query_filters.size() == 1 ? query_filters[0] : query_filters[i];
+            // 使用grid graph计算初始搜索点
+            std::vector<uint32_t> init_ids = grid_graph->search(query + i * query_aligned_dim, 20);
 
-                    index->search_with_tags(query + i * query_aligned_dim, recall_at, L,
-                                            query_result_tags.data() + i * recall_at, nullptr, res, true, raw_filter);
-                }
-
-                for (int64_t r = 0; r < (int64_t)recall_at; r++)
-                {
-                    query_result_ids[test_id][recall_at * i + r] = query_result_tags[recall_at * i + r];
-                }
-            }
-            else
-            {
-                cmp_stats[i] = index
-                                   ->search(query + i * query_aligned_dim, recall_at, L,
-                                            query_result_ids[test_id].data() + i * recall_at)
-                                   .second;
-            }
+            cmp_stats[i] = index
+                                ->search(query + i * query_aligned_dim, recall_at, L,
+                                        query_result_ids[test_id].data() + i * recall_at,
+                                        nullptr, init_ids)
+                                .second;
+            
             auto qe = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> diff = qe - qs;
             latency_stats[i] = (float)(diff.count() * 1000000);

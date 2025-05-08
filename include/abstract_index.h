@@ -72,6 +72,11 @@ class AbstractIndex
     std::pair<uint32_t, uint32_t> search(const data_type *query, const size_t K, const uint32_t L, IDType *indices,
                                          float *distances = nullptr);
 
+    // 添加新的search重载，支持init_ids参数
+    template <typename data_type, typename IDType>
+    std::pair<uint32_t, uint32_t> search(const data_type *query, const size_t K, const uint32_t L, IDType *indices,
+                                         float *distances, const std::vector<uint32_t>& init_ids);
+
     // Filter support search
     // IndexType is either uint32_t or uint64_t
     template <typename IndexType>
@@ -110,6 +115,8 @@ class AbstractIndex
     virtual void _build(const DataType &data, const size_t num_points_to_load, TagVector &tags) = 0;
     virtual std::pair<uint32_t, uint32_t> _search(const DataType &query, const size_t K, const uint32_t L,
                                                   std::any &indices, float *distances = nullptr) = 0;
+    virtual std::pair<uint32_t, uint32_t> _search_with_init_ids(const DataType &query, const size_t K, const uint32_t L,
+                                                               std::any &indices, float *distances, const std::any &init_ids) = 0;
     virtual std::pair<uint32_t, uint32_t> _search_with_filters(const DataType &query, const std::string &filter_label,
                                                                const size_t K, const uint32_t L, std::any &indices,
                                                                float *distances) = 0;
