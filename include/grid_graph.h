@@ -179,12 +179,7 @@ public:
             for (uint64_t coord : neighbor_coords) {
                 auto it = quantized_coord_map_.find(coord);
                 if (it != quantized_coord_map_.end()) {
-                    // 计算量化坐标之间的距离
-                    float distance = quantizedDistance(quantized_coord, coord);
-                    // 如果距离小于等于2，则建立边
-                    if (distance <= 2.0) {
-                        node_neighbors.push_back(it->second);
-                    }
+                    node_neighbors.push_back(it->second);
                 }
             }
             
