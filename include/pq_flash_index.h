@@ -35,6 +35,14 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
     DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix);
 #endif
 
+    // Optimized load function that can skip PQ data loading
+#ifdef EXEC_ENV_OLS
+    DISKANN_DLLEXPORT int load(diskann::MemoryMappedFiles &files, uint32_t num_threads, const char *index_prefix,
+                               const bool skip_pq_loading);
+#else
+    DISKANN_DLLEXPORT int load(uint32_t num_threads, const char *index_prefix, const bool skip_pq_loading);
+#endif
+
 #ifdef EXEC_ENV_OLS
     DISKANN_DLLEXPORT int load_from_separate_paths(diskann::MemoryMappedFiles &files, uint32_t num_threads,
                                                    const char *index_filepath, const char *pivots_filepath,
@@ -42,6 +50,17 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
 #else
     DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
                                                    const char *pivots_filepath, const char *compressed_filepath);
+#endif
+
+    // Optimized version that can skip PQ data loading for exact distance computation only
+#ifdef EXEC_ENV_OLS
+    DISKANN_DLLEXPORT int load_from_separate_paths(diskann::MemoryMappedFiles &files, uint32_t num_threads,
+                                                   const char *index_filepath, const char *pivots_filepath,
+                                                   const char *compressed_filepath, const bool skip_pq_loading);
+#else
+    DISKANN_DLLEXPORT int load_from_separate_paths(uint32_t num_threads, const char *index_filepath,
+                                                   const char *pivots_filepath, const char *compressed_filepath,
+                                                   const bool skip_pq_loading);
 #endif
 
     DISKANN_DLLEXPORT void load_cache_list(std::vector<uint32_t> &node_list);
@@ -79,6 +98,18 @@ template <typename T, typename LabelT = uint32_t> class PQFlashIndex
                                               uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
                                               const bool use_filter, const LabelT &filter_label,
                                               const uint32_t io_limit, const bool use_reorder_data = false,
+                                              QueryStats *stats = nullptr);
+
+    // New overload with exact_distance parameter  
+    void cached_beam_search(const T *query1, const uint64_t k_search, const uint64_t l_search, uint64_t *indices,
+                            float *distances, const uint64_t beam_width, const bool use_filter,
+                            const LabelT &filter_label, const uint32_t io_limit, const bool use_reorder_data,
+                            const bool use_exact_distance, QueryStats *stats = nullptr);
+
+    // Convenience overload for exact distance calculation
+    DISKANN_DLLEXPORT void cached_beam_search(const T *query, const uint64_t k_search, const uint64_t l_search,
+                                              uint64_t *res_ids, float *res_dists, const uint64_t beam_width,
+                                              const bool use_reorder_data, const bool use_exact_distance,
                                               QueryStats *stats = nullptr);
 
     DISKANN_DLLEXPORT LabelT get_converted_label(const std::string &filter_label);
