@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <iostream>
+#include <string>
 #include "utils.h"
 
 // Convert float types
@@ -31,9 +32,11 @@ void block_convert_byte(std::ifstream &reader, std::ofstream &writer, uint8_t *r
 
 int main(int argc, char **argv)
 {
-    if (argc != 4)
+    if (argc != 4 && argc != 5)
     {
-        std::cout << argv[0] << " <float/int8/uint8> input_vecs output_bin" << std::endl;
+        std::cout << argv[0] << " <float/int8/uint8> input_vecs output_bin [num_vectors]" << std::endl;
+        std::cout << "  num_vectors: optional parameter to specify how many vectors to convert" << std::endl;
+        std::cout << "               if not specified, all vectors will be converted" << std::endl;
         exit(-1);
     }
 
@@ -57,8 +60,25 @@ int main(int argc, char **argv)
     reader.read((char *)&ndims_u32, sizeof(uint32_t));
     reader.seekg(0, std::ios::beg);
     size_t ndims = (size_t)ndims_u32;
-    size_t npts = fsize / ((ndims * datasize) + sizeof(uint32_t));
-    std::cout << "Dataset: #pts = " << npts << ", # dims = " << ndims << std::endl;
+    size_t total_npts = fsize / ((ndims * datasize) + sizeof(uint32_t));
+    
+    // 确定要转换的向量数量
+    size_t npts = total_npts;
+    if (argc == 5)
+    {
+        size_t requested_npts = std::stoul(argv[4]);
+        if (requested_npts > total_npts)
+        {
+            std::cout << "Warning: requested " << requested_npts << " vectors but only " 
+                      << total_npts << " available. Converting all " << total_npts << " vectors." << std::endl;
+        }
+        else
+        {
+            npts = requested_npts;
+        }
+    }
+    
+    std::cout << "Dataset: total #pts = " << total_npts << ", converting #pts = " << npts << ", # dims = " << ndims << std::endl;
 
     size_t blk_size = 131072;
     size_t nblks = ROUND_UP(npts, blk_size) / blk_size;
