@@ -264,6 +264,10 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                     InMemQueryScratch<T> *scratch, bool use_filter = false,
                                     uint32_t filteredLindex = 0);
 
+        // Multi-stage neighbor search and pruning based on ranking
+    void search_for_point_and_prune_multistage(int location, std::vector<uint32_t> &pruned_list,
+                                              InMemQueryScratch<T> *scratch);
+
     void prune_neighbors(const uint32_t location, std::vector<Neighbor> &pool, std::vector<uint32_t> &pruned_list,
                          InMemQueryScratch<T> *scratch);
 
@@ -339,6 +343,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     // Data
     std::shared_ptr<AbstractDataStore<T>> _data_store;
 
+
+
     // Graph related data structures
     std::unique_ptr<AbstractGraphStore> _graph_store;
 
@@ -409,6 +415,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     std::shared_ptr<AbstractDataStore<T>> _pq_data_store = nullptr;
     bool _pq_generated = false;
     FixedChunkPQTable _pq_table;
+
+
 
     //
     // Data structures, locks and flags for dynamic indexing and tags

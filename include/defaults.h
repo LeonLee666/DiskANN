@@ -30,5 +30,17 @@ const uint32_t MAX_DEGREE = 64;
 const uint32_t BUILD_LIST_SIZE = 100;
 const uint32_t SATURATE_GRAPH = false;
 const uint32_t SEARCH_LIST_SIZE = 100;
+
+// Stage-wise neighbor selection limits for ranking-based building
+const uint32_t STAGE1_MAX_NEIGHBORS = 20;    // Stage 1 max neighbors from top 64
+const uint32_t STAGE2_MAX_NEIGHBORS = 20;    // Stage 2 max neighbors from rank 65-128  
+const uint32_t STAGE3_MAX_NEIGHBORS = 20;    // Stage 3 max neighbors from rank 129-256
+
+// Multi-stage candidate selection based on search ranking
+const uint32_t STAGE1_SEARCH_LIST_SIZE = 40;     // Stage 1: top 64 candidates
+const uint32_t STAGE2_SEARCH_LIST_SIZE = 100;    // Stage 2: top 128 candidates (rank 65-128)
+const uint32_t STAGE3_SEARCH_LIST_SIZE = 300;    // Stage 3: top 256 candidates (rank 129-256)
+
+
 } // namespace defaults
 } // namespace diskann

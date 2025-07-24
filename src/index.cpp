@@ -4,6 +4,8 @@
 #include <omp.h>
 
 #include <type_traits>
+#include <random>
+
 
 #include "boost/dynamic_bitset.hpp"
 #include "index_factory.h"
@@ -13,6 +15,7 @@
 #include "tsl/robin_set.h"
 #include "windows_customizations.h"
 #include "tag_uint128.h"
+
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
@@ -1283,11 +1286,158 @@ void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pru
     inter_insert(n, pruned_list, _indexingRange, scratch);
 }
 
+// PQ-based Grid-aware index building implementation for high-dimensional vectors
+template <typename T, typename TagT, typename LabelT>
+void Index<T, TagT, LabelT>::search_for_point_and_prune_multistage(int location, std::vector<uint32_t> &pruned_list,
+                                                                   InMemQueryScratch<T> *scratch)
+{
+    if (pruned_list.size() > 0)
+    {
+        throw diskann::ANNException("ERROR: non-empty pruned_list passed", -1, __FUNCSIG__, __FILE__, __LINE__);
+    }
+
+    const std::vector<uint32_t> init_ids = get_init_ids();
+    const std::vector<LabelT> unused_filter_label;
+    
+    // Get the query vector
+    _data_store->get_vector(location, scratch->aligned_query());
+    
+    // Stage 1: Search for top 64 candidates
+    scratch->clear();
+    iterate_to_fixed_point(scratch, defaults::STAGE1_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
+    
+    auto &pool_stage1 = scratch->pool();
+    
+    // Remove query point from candidates
+    for (uint32_t i = 0; i < pool_stage1.size(); i++)
+    {
+        if (pool_stage1[i].id == (uint32_t)location)
+        {
+            pool_stage1.erase(pool_stage1.begin() + i);
+            i--;
+        }
+    }
+    
+    std::vector<uint32_t> final_pruned_list;
+    
+    // Prune Stage 1 candidates (rank 1-64)
+    if (!pool_stage1.empty()) {
+        std::vector<uint32_t> stage1_pruned;
+        std::vector<Neighbor> stage1_candidates = pool_stage1;  // Copy for pruning
+        
+        occlude_list(location, stage1_candidates, _indexingAlpha, defaults::STAGE1_MAX_NEIGHBORS,
+                    _indexingMaxC, stage1_pruned, scratch);
+        
+        // Add Stage 1 results to final list
+        final_pruned_list.insert(final_pruned_list.end(), stage1_pruned.begin(), stage1_pruned.end());
+    }
+    
+    // Stage 2: Extend search to top 128 candidates
+    if (pool_stage1.size() < defaults::STAGE2_SEARCH_LIST_SIZE) {
+        scratch->clear();
+        _data_store->get_vector(location, scratch->aligned_query());
+        iterate_to_fixed_point(scratch, defaults::STAGE2_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
+    }
+    
+    auto &pool_stage2 = scratch->pool();
+    
+    // Remove query point from candidates
+    for (uint32_t i = 0; i < pool_stage2.size(); i++)
+    {
+        if (pool_stage2[i].id == (uint32_t)location)
+        {
+            pool_stage2.erase(pool_stage2.begin() + i);
+            i--;
+        }
+    }
+    
+    // Prune Stage 2 candidates (rank 65-128)
+    if (pool_stage2.size() > defaults::STAGE1_SEARCH_LIST_SIZE) {
+        size_t stage2_start = defaults::STAGE1_SEARCH_LIST_SIZE;
+        size_t stage2_end = std::min(static_cast<size_t>(defaults::STAGE2_SEARCH_LIST_SIZE), pool_stage2.size());
+        
+        if (stage2_end > stage2_start) {
+            std::vector<Neighbor> stage2_candidates(pool_stage2.begin() + stage2_start, pool_stage2.begin() + stage2_end);
+            std::vector<uint32_t> stage2_pruned;
+            
+            occlude_list(location, stage2_candidates, _indexingAlpha, defaults::STAGE2_MAX_NEIGHBORS,
+                        _indexingMaxC, stage2_pruned, scratch);
+            
+            // Add Stage 2 results to final list
+            final_pruned_list.insert(final_pruned_list.end(), stage2_pruned.begin(), stage2_pruned.end());
+        }
+    }
+    
+    // Stage 3: Extend search to top 256 candidates  
+    if (pool_stage2.size() < defaults::STAGE3_SEARCH_LIST_SIZE) {
+        scratch->clear();
+        _data_store->get_vector(location, scratch->aligned_query());
+        iterate_to_fixed_point(scratch, defaults::STAGE3_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
+    }
+    
+    auto &pool_stage3 = scratch->pool();
+    
+    // Remove query point from candidates
+    for (uint32_t i = 0; i < pool_stage3.size(); i++)
+    {
+        if (pool_stage3[i].id == (uint32_t)location)
+        {
+            pool_stage3.erase(pool_stage3.begin() + i);
+            i--;
+        }
+    }
+    
+    // Prune Stage 3 candidates (rank 129-256)
+    if (pool_stage3.size() > defaults::STAGE2_SEARCH_LIST_SIZE) {
+        size_t stage3_start = defaults::STAGE2_SEARCH_LIST_SIZE;
+        size_t stage3_end = std::min(static_cast<size_t>(defaults::STAGE3_SEARCH_LIST_SIZE), pool_stage3.size());
+        
+        if (stage3_end > stage3_start) {
+            std::vector<Neighbor> stage3_candidates(pool_stage3.begin() + stage3_start, pool_stage3.begin() + stage3_end);
+            std::vector<uint32_t> stage3_pruned;
+            
+            occlude_list(location, stage3_candidates, _indexingAlpha, defaults::STAGE3_MAX_NEIGHBORS,
+                        _indexingMaxC, stage3_pruned, scratch);
+            
+            // Add Stage 3 results to final list
+            final_pruned_list.insert(final_pruned_list.end(), stage3_pruned.begin(), stage3_pruned.end());
+        }
+    }
+    
+    // Set the final result
+    pruned_list = final_pruned_list;
+    
+    // Ensure we have at least one connection for connectivity
+    if (pruned_list.empty() && _num_frozen_pts > 0)
+    {
+        pruned_list.push_back(_start);
+    }
+    
+    assert(!pruned_list.empty());
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::link()
 {
     uint32_t num_threads = _indexingThreads;
     if (num_threads != 0)
         omp_set_num_threads(num_threads);
+
+
 
     /* visit_order is a vector that is initialized to the entire graph */
     std::vector<uint32_t> visit_order;
@@ -1322,7 +1472,26 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
         ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
         auto scratch = manager.scratch_space();
         std::vector<uint32_t> pruned_list;
-        if (_filtered_index)
+        
+        // Check if we should use multi-stage ranking-based building
+        if constexpr (std::is_same_v<T, float>)
+        {
+            bool use_multistage = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
+            
+            if (use_multistage)
+            {
+                search_for_point_and_prune_multistage(node, pruned_list, scratch);
+            }
+            else if (_filtered_index)
+            {
+                search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
+            }
+            else
+            {
+                search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch);
+            }
+        }
+        else if (_filtered_index)
         {
             search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
         }
@@ -1985,10 +2154,8 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::search(const T *query, con
 
     if (L > scratch->get_L())
     {
-        diskann::cout << "Attempting to expand query scratch_space. Was created "
-                      << "with Lsize: " << scratch->get_L() << " but search L is: " << L << std::endl;
+        
         scratch->resize_for_new_L(L);
-        diskann::cout << "Resize completed. New scratch->L is " << scratch->get_L() << std::endl;
     }
 
     const std::vector<LabelT> unused_filter_label;
@@ -2983,7 +3150,27 @@ int Index<T, TagT, LabelT>::insert_point(const T *point, const TagT tag, const s
     ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
     auto scratch = manager.scratch_space();
     std::vector<uint32_t> pruned_list; // it is the set best candidates to connect to this point
-    if (_filtered_index)
+    
+    // Check if we should use PQ-based grid-aware building
+    if constexpr (std::is_same_v<T, float>)
+    {
+        bool use_multistage = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
+        
+        if (use_multistage)
+        {
+            search_for_point_and_prune_multistage(location, pruned_list, scratch);
+        }
+        else if (_filtered_index)
+        {
+            // when filtered the best_candidates will share the same label ( label_present > distance)
+            search_for_point_and_prune(location, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
+        }
+        else
+        {
+            search_for_point_and_prune(location, _indexingQueueSize, pruned_list, scratch);
+        }
+    }
+    else if (_filtered_index)
     {
         // when filtered the best_candidates will share the same label ( label_present > distance)
         search_for_point_and_prune(location, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
@@ -3498,3 +3685,4 @@ template DISKANN_DLLEXPORT std::pair<uint32_t, uint32_t> Index<int8_t, uint32_t,
               float *distances);
 
 } // namespace diskann
+
