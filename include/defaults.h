@@ -36,13 +36,13 @@ const uint32_t GRID_SIZE_2D = 32;           // 32x32 grid for 256x256 space
 const uint32_t GRID_CELL_SIZE_2D = 8;       // Each grid cell is 8x8 pixels
 
 // Stage-wise neighbor selection limits for 2D grid-aware building
-const uint32_t STAGE1_MAX_NEIGHBORS = 8;    // 3x3 grid neighbors
-const uint32_t STAGE2_MAX_NEIGHBORS = 6;    // 4x4 grid outer ring neighbors  
-const uint32_t STAGE3_MAX_NEIGHBORS = 4;    // 5x5 grid outer ring neighbors
+const uint32_t STAGE1_MAX_NEIGHBORS = 3;    // 3x3 grid neighbors (grid distance ≤ 1)
+const uint32_t STAGE2_MAX_NEIGHBORS = 3;    // 5x5 but exclude 3x3 area (1 < grid distance ≤ 2)
+const uint32_t STAGE3_MAX_NEIGHBORS = 3;    // 7x7 but exclude 5x5 area (2 < grid distance ≤ 3)
 
 // Search parameters for each stage
-const uint32_t STAGE1_SEARCH_LIST_SIZE = 50;
-const uint32_t STAGE2_SEARCH_LIST_SIZE = 40;
-const uint32_t STAGE3_SEARCH_LIST_SIZE = 30;
+const uint32_t STAGE1_SEARCH_LIST_SIZE = 90;
+const uint32_t STAGE2_SEARCH_LIST_SIZE = 160;
+const uint32_t STAGE3_SEARCH_LIST_SIZE = 240;
 } // namespace defaults
 } // namespace diskann

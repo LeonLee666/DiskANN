@@ -11,9 +11,9 @@
 - **RNG剪枝**: 每个阶段内部使用相对邻居图(RNG)策略进行剪枝
 
 ### 分阶段建图策略
-1. **Stage 1 (3×3 grid)**: 以当前节点为中心的3×3 grid范围内稀疏化选择邻居
-2. **Stage 2 (4×4 外围)**: 在4×4 grid范围但不在3×3范围内的区域选择邻居
-3. **Stage 3 (5×5 外围)**: 在5×5 grid范围但不在4×4范围内的区域选择邻居
+1. **Stage 1 (3×3 grid)**: 在3×3 grid完整范围内（grid distance ≤ 1）创建最多4条边
+2. **Stage 2 (5×5 外围)**: 在5×5 grid范围但排除3×3区域（1 < grid distance ≤ 2）创建最多3条边
+3. **Stage 3 (7×7 外围)**: 在7×7 grid范围但排除5×5区域（2 < grid distance ≤ 3）创建最多2条边
 
 ## 配置参数
 
@@ -23,9 +23,9 @@ const uint32_t GRID_SIZE_2D = 32;           // 32×32 grid划分
 const uint32_t GRID_CELL_SIZE_2D = 8;       // 每个grid单元8×8像素
 
 // 各阶段邻居数量限制
-const uint32_t STAGE1_MAX_NEIGHBORS = 8;    // Stage 1最大邻居数
-const uint32_t STAGE2_MAX_NEIGHBORS = 6;    // Stage 2最大邻居数  
-const uint32_t STAGE3_MAX_NEIGHBORS = 4;    // Stage 3最大邻居数
+const uint32_t STAGE1_MAX_NEIGHBORS = 4;    // Stage 1: 3×3网格内最大邻居数
+const uint32_t STAGE2_MAX_NEIGHBORS = 3;    // Stage 2: 5×5但非3×3区域最大邻居数  
+const uint32_t STAGE3_MAX_NEIGHBORS = 2;    // Stage 3: 7×7但非5×5区域最大邻居数
 
 // 各阶段搜索参数
 const uint32_t STAGE1_SEARCH_LIST_SIZE = 50;
@@ -59,66 +59,119 @@ cd apps/utils
 
 ## 索引构建与测试
 
-### 基本使用
+### 推荐使用：分离式构建和搜索
+
+从v2.0开始，我们提供了分离的构建和搜索程序，提供更好的灵活性和可维护性：
+
+#### 1. 构建索引
 ```bash
 cd apps
-./test_2d_grid_index data.bin queries.bin output_index [R] [L] [alpha] [threads]
+./build_2d_grid_index --data_file <数据文件> --index_prefix <输出索引前缀> [options]
 ```
 
-参数说明：
-- `data.bin`: 输入数据文件
-- `queries.bin`: 查询文件  
-- `output_index`: 输出索引前缀
-- `R`: 图的最大度数 (默认32)
-- `L`: 构建时候选列表大小 (默认100)
-- `alpha`: RNG剪枝参数 (默认1.2)
-- `threads`: 线程数 (默认1)
+构建参数：
+- `--data_file <文件>`: 输入数据文件
+- `--index_prefix <前缀>`: 输出索引前缀
+- `--R <值>`: 图的最大度数 (默认32)
+- `--build_L <值>`: 构建时候选列表大小 (默认100) **注意：在Grid-Aware模式下此参数无效**
+- `--alpha <值>`: RNG剪枝参数 (默认1.2)
+- `--num_threads <值>`: 线程数 (默认1)
 
-### 示例
+**重要说明**: 在Grid-Aware 2D构建中，`--build_L`参数不起作用，因为Grid-Aware使用基于几何的搜索策略而不是传统的图遍历。实际的搜索列表大小由`STAGE*_SEARCH_LIST_SIZE`常量控制。
+
+#### 2. 搜索测试
+```bash
+cd apps
+./search_2d_grid_index --index_prefix <索引前缀> --query_file <查询文件> [options]
+```
+
+搜索参数：
+- `--index_prefix <前缀>`: 预先构建的索引文件前缀
+- `--query_file <文件>`: 查询文件
+- `--search_L <值1,值2,...>`: 搜索时的L值列表 (默认50,100,150)
+- `--K <值>`: 返回的邻居数 (默认10)
+- `--test_queries <值>`: 测试查询数量 (默认1024)
+- `--gt_file <文件>`: ground truth文件 (可选，用于计算recall)
+- `--num_threads <值>`: 搜索线程数 (默认1)
+
+### 完整使用示例
+
+#### 步骤1：生成测试数据
 ```bash
 # 生成测试数据
 ./apps/utils/generate_uniform_2d_points test_data.bin test_queries.bin
-
-# 构建grid-aware索引
-./apps/test_2d_grid_index test_data.bin test_queries.bin grid_index 32 100 1.2 4
-
-# 运行结果示例
-=== 2D Grid-Aware DiskANN索引测试 ===
-数据文件: test_data.bin
-查询文件: test_queries.bin
-索引前缀: grid_index
-参数: R=32, L=100, alpha=1.2, threads=4
-
-数据集信息:
-  点数: 10240
-  维度: 2
-
-Grid配置:
-  Grid大小: 32x32
-  Grid单元大小: 8x8
-  阶段1邻居数: 8
-  阶段2邻居数: 6
-  阶段3邻居数: 4
-
-开始构建索引...
-索引构建完成，耗时: 1250 毫秒
-索引保存完成，耗时: 45 毫秒
-
-查询测试:
-  查询数量: 1024
-  查询维度: 2
-执行搜索测试 (K=10, L=50)...
-查询 0: 1205(12.5) 3421(15.8) 7832(18.2) ...
-...
-
-搜索性能统计:
-  平均查询时间: 15.6 微秒
-  总搜索时间: 156 毫秒
-  QPS: 6410.25
-
-=== 测试完成 ===
-索引文件已保存到: grid_index.*
 ```
+
+#### 步骤2：构建索引
+```bash
+# 构建grid-aware索引
+./apps/build_2d_grid_index --data_file test_data.bin --index_prefix grid_index --R 32 --build_L 100 --alpha 1.2 --num_threads 8
+
+# 输出示例:
+2D Grid-Aware DiskANN 索引构建程序
+构建参数: R=32, L=100, alpha=1.2, threads=8
+数据集: 10240 点, 2 维
+开始构建索引...
+注意：构建过程中会显示度数统计等详细信息
+
+Starting index build with 10240 points...
+...
+Index built with degree: max:32  avg:24.5  min:18  count(deg<2):0
+
+索引构建完成，耗时: 1250 ms
+
+图结构统计:
+Max points: 10240, Cur points: 10240, Frozen points: 1, start: 9999
+Graph max degree: 32, Avg degree: 24.5, Effective max degree: 30
+Number of edges: 125440
+
+保存索引到: grid_index.*
+索引保存完成！
+
+# 构建后会生成以下文件：
+# grid_index      - 图结构文件（主文件）
+# grid_index.data - 数据文件
+# grid_index.tags - 标签文件（如果使用标签）
+```
+
+#### 步骤3：搜索测试
+```bash
+# 执行搜索测试
+./apps/search_2d_grid_index --index_prefix grid_index --query_file test_queries.bin --search_L 50,100,150,200 --K 10 --test_queries 1000
+
+# 输出示例:
+2D Grid-Aware DiskANN 索引搜索测试程序
+搜索参数: K=10, 测试查询数=1000, threads=1, L值: 50,100,150,200
+查询集: 1024 点, 2 维
+加载索引: grid_index
+索引加载完成
+
+开始搜索测试...
+     L          QPS     Avg Dist Cmps   Mean Latency (us)  99.9 Latency (us)
+================================================================================
+    50      6410.25              12.8               156.2               245.6
+   100      5234.12              18.4               191.0               298.4
+   150      4521.33              24.2               221.1               334.8
+   200      4098.76              29.6               244.0               367.2
+================================================================================
+搜索测试完成！
+```
+
+### 传统方式：一体化测试（向后兼容）
+```bash
+cd apps
+./test_2d_grid_index --data_file data.bin --query_file queries.bin --index_prefix output_index [options]
+```
+
+这个程序包含构建和搜索的完整流程，但对于大规模实验，建议使用分离式程序。
+
+### 分离式程序的优势
+
+1. **灵活性**: 可以多次测试不同搜索参数而无需重新构建索引
+2. **效率**: 构建一次索引，进行多次搜索实验
+3. **可维护性**: 构建和搜索逻辑分离，便于调试和优化
+4. **批量实验**: 便于进行大规模参数扫描实验
+5. **资源管理**: 构建和搜索可以在不同的机器上进行
 
 ## 代码集成
 

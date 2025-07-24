@@ -1293,14 +1293,11 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
         throw diskann::ANNException("ERROR: non-empty pruned_list passed", -1, __FUNCSIG__, __FILE__, __LINE__);
     }
 
-    // Get the current point's grid coordinates
-    auto [grid_x, grid_y] = get_grid_coordinates(location);
-    
     // Vector to store all candidate neighbors from all stages
     std::vector<uint32_t> all_candidates;
     all_candidates.reserve(defaults::STAGE1_SEARCH_LIST_SIZE + defaults::STAGE2_SEARCH_LIST_SIZE + defaults::STAGE3_SEARCH_LIST_SIZE);
     
-    // Stage 1: 3x3 grid neighbors (min_range=0, max_range=1 means grid distance <= 1)
+    // Stage 1: 3x3 grid neighbors (grid distance <= 1), create up to 4 edges
     std::vector<uint32_t> stage1_candidates;
     get_grid_neighbors_in_range(location, 0, 1, stage1_candidates, scratch);
     
@@ -1317,13 +1314,13 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
     }
     std::sort(stage1_pool.begin(), stage1_pool.end());
     
-    // Prune Stage 1 neighbors
+    // Prune Stage 1 neighbors - limit to 4 edges
     std::vector<uint32_t> stage1_pruned;
     if (stage1_pool.size() > 0)
     {
         if (stage1_pool.size() > defaults::STAGE1_SEARCH_LIST_SIZE)
             stage1_pool.resize(defaults::STAGE1_SEARCH_LIST_SIZE);
-        occlude_list(location, stage1_pool, _indexingAlpha, defaults::STAGE1_MAX_NEIGHBORS, 
+        occlude_list(location, stage1_pool, _indexingAlpha, defaults::STAGE1_MAX_NEIGHBORS,
                     _indexingMaxC, stage1_pruned, scratch);
     }
     
@@ -1333,7 +1330,7 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
         all_candidates.push_back(neighbor);
     }
     
-    // Stage 2: 4x4 grid outer ring (min_range=2, max_range=2 means grid distance = 2)
+    // Stage 2: 5x5 grid but exclude 3x3 area (1 < grid distance <= 2), create up to 3 edges
     std::vector<uint32_t> stage2_candidates;
     get_grid_neighbors_in_range(location, 2, 2, stage2_candidates, scratch);
     
@@ -1348,7 +1345,7 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
     }
     std::sort(stage2_pool.begin(), stage2_pool.end());
     
-    // Prune Stage 2 neighbors
+    // Prune Stage 2 neighbors - limit to 3 edges
     std::vector<uint32_t> stage2_pruned;
     if (stage2_pool.size() > 0)
     {
@@ -1364,7 +1361,7 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
         all_candidates.push_back(neighbor);
     }
     
-    // Stage 3: 5x5 grid outer ring (min_range=3, max_range=3 means grid distance = 3)  
+    // Stage 3: 7x7 grid but exclude 5x5 area (2 < grid distance <= 3), create up to 2 edges  
     std::vector<uint32_t> stage3_candidates;
     get_grid_neighbors_in_range(location, 3, 3, stage3_candidates, scratch);
     
@@ -1379,7 +1376,7 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
     }
     std::sort(stage3_pool.begin(), stage3_pool.end());
     
-    // Prune Stage 3 neighbors
+    // Prune Stage 3 neighbors - limit to 2 edges
     std::vector<uint32_t> stage3_pruned;
     if (stage3_pool.size() > 0)
     {

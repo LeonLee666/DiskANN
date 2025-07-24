@@ -14,22 +14,18 @@
 #include "defaults.h"
 
 void print_usage(char *argv0) {
-    std::cout << "用法: " << argv0 << " <数据文件> <查询文件> <输出索引前缀> [options]" << std::endl;
+    std::cout << "用法: " << argv0 << " --index_prefix <索引前缀> --query_file <查询文件> [options]" << std::endl;
     std::cout << "参数说明:" << std::endl;
-    std::cout << "  数据文件: 二进制格式的数据文件 (.bin)" << std::endl;
-    std::cout << "  查询文件: 二进制格式的查询文件 (.bin)" << std::endl;
-    std::cout << "  输出索引前缀: 索引保存的路径前缀" << std::endl;
+    std::cout << "  --index_prefix <前缀>: 预先构建的索引文件路径前缀" << std::endl;
+    std::cout << "  --query_file <文件>: 二进制格式的查询文件 (.bin)" << std::endl;
     std::cout << "选项:" << std::endl;
-    std::cout << "  --R <值>: 图的最大度数 (默认: 32)" << std::endl;
-    std::cout << "  --build_L <值>: 构建时的候选列表大小 (默认: 100)" << std::endl;
-    std::cout << "  --alpha <值>: RNG剪枝参数 (默认: 1.2)" << std::endl;
-    std::cout << "  --num_threads <值>: 线程数 (默认: 1)" << std::endl;
     std::cout << "  --search_L <值1,值2,...>: 搜索时的L值列表 (默认: 50,100,150)" << std::endl;
     std::cout << "  --K <值>: 返回的邻居数 (默认: 10)" << std::endl;
-    std::cout << "  --test_queries <值>: 测试查询数量 (默认: 100)" << std::endl;
+    std::cout << "  --test_queries <值>: 测试查询数量 (默认: 1024)" << std::endl;
     std::cout << "  --gt_file <文件>: ground truth文件路径 (可选，用于计算recall)" << std::endl;
+    std::cout << "  --num_threads <值>: 搜索线程数 (默认: 1)" << std::endl;
     std::cout << std::endl;
-    std::cout << "示例: " << argv0 << " data.bin queries.bin test_index --R 32 --build_L 100 --search_L 50,100,150,200 --gt_file gt.bin" << std::endl;
+    std::cout << "示例: " << argv0 << " --index_prefix test_index --query_file queries.bin --search_L 50,100,150,200 --K 10 --test_queries 1000 --gt_file gt.bin" << std::endl;
 }
 
 std::vector<uint32_t> parse_search_L(const std::string& L_str) {
@@ -55,36 +51,28 @@ std::vector<uint32_t> parse_search_L(const std::string& L_str) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 4) {
+    if (argc < 2) {
         print_usage(argv[0]);
         return -1;
     }
 
-    std::string data_file = argv[1];
-    std::string query_file = argv[2];
-    std::string index_prefix = argv[3];
+    std::string index_prefix = "";
+    std::string query_file = "";
     
-    // 默认参数
-    uint32_t R = 32;
-    uint32_t build_L = 100;
-    float alpha = 1.2f;
-    uint32_t num_threads = 1;
+    // 默认搜索参数
     std::vector<uint32_t> search_L_vec = {50, 100, 150};
     uint32_t K = 10;
     uint32_t test_queries = 1024;
     std::string gt_file = "";
+    uint32_t num_threads = 1;
 
     // 解析命令行参数
-    for (int i = 4; i < argc - 1; i++) {
+    for (int i = 1; i < argc - 1; i++) {
         std::string arg = argv[i];
-        if (arg == "--R") {
-            R = std::stoul(argv[++i]);
-        } else if (arg == "--build_L") {
-            build_L = std::stoul(argv[++i]);
-        } else if (arg == "--alpha") {
-            alpha = std::stof(argv[++i]);
-        } else if (arg == "--num_threads") {
-            num_threads = std::stoul(argv[++i]);
+        if (arg == "--index_prefix") {
+            index_prefix = argv[++i];
+        } else if (arg == "--query_file") {
+            query_file = argv[++i];
         } else if (arg == "--search_L") {
             search_L_vec = parse_search_L(argv[++i]);
         } else if (arg == "--K") {
@@ -93,12 +81,20 @@ int main(int argc, char **argv) {
             test_queries = std::stoul(argv[++i]);
         } else if (arg == "--gt_file") {
             gt_file = argv[++i];
+        } else if (arg == "--num_threads") {
+            num_threads = std::stoul(argv[++i]);
         }
     }
 
-    std::cout << "2D Grid-Aware DiskANN 索引测试" << std::endl;
-    std::cout << "构建参数: R=" << R << ", L=" << build_L << ", alpha=" << alpha << ", threads=" << num_threads << std::endl;
-    std::cout << "搜索参数: K=" << K << ", 测试查询数=" << test_queries << ", L值: ";
+    // 检查必需参数
+    if (index_prefix.empty() || query_file.empty()) {
+        std::cerr << "错误: 必须指定 --index_prefix 和 --query_file 参数" << std::endl;
+        print_usage(argv[0]);
+        return -1;
+    }
+
+    std::cout << "2D Grid-Aware DiskANN 索引搜索测试程序" << std::endl;
+    std::cout << "搜索参数: K=" << K << ", 测试查询数=" << test_queries << ", threads=" << num_threads << ", L值: ";
     for (size_t i = 0; i < search_L_vec.size(); i++) {
         std::cout << search_L_vec[i];
         if (i < search_L_vec.size() - 1) std::cout << ",";
@@ -106,31 +102,45 @@ int main(int argc, char **argv) {
     std::cout << std::endl;
 
     try {
-        // 读取数据文件元信息
-        size_t data_num, data_dim;
-        diskann::get_bin_metadata(data_file, data_num, data_dim);
-        
-        std::cout << "数据集: " << data_num << " 点, " << data_dim << " 维" << std::endl;
-        
-        if (data_dim != 2) {
-            std::cerr << "错误: Grid-aware建图只支持2维数据" << std::endl;
+        // 检查索引文件是否存在（DiskANN内存索引的图文件没有扩展名）
+        std::string graph_file = index_prefix;
+        std::string data_file = index_prefix + ".data";
+        if (!file_exists(graph_file)) {
+            std::cerr << "错误: 索引图文件不存在: " << graph_file << std::endl;
+            std::cerr << "请确保已使用 build_2d_grid_index 构建了索引" << std::endl;
+            return -1;
+        }
+        if (!file_exists(data_file)) {
+            std::cerr << "错误: 索引数据文件不存在: " << data_file << std::endl;
+            std::cerr << "请确保已使用 build_2d_grid_index 构建了索引" << std::endl;
             return -1;
         }
 
-        // 创建索引构建参数
-        auto index_build_params = diskann::IndexWriteParametersBuilder(build_L, R)
-                                      .with_alpha(alpha)
-                                      .with_saturate_graph(false)
-                                      .with_num_threads(num_threads)
-                                      .build();
+        // 读取查询文件元信息
+        size_t query_num, query_dim;
+        diskann::get_bin_metadata(query_file, query_num, query_dim);
+        std::cout << "查询集: " << query_num << " 点, " << query_dim << " 维" << std::endl;
+        
+        if (query_dim != 2) {
+            std::cerr << "错误: 查询数据必须是2维" << std::endl;
+            return -1;
+        }
 
-        // 创建索引
+        test_queries = std::min(test_queries, (uint32_t)query_num);
+
+        // 创建搜索参数
+        auto search_params = std::make_shared<diskann::IndexSearchParams>(
+            *std::max_element(search_L_vec.begin(), search_L_vec.end()), 
+            num_threads
+        );
+
+        // 创建索引对象并加载
         diskann::Index<uint8_t, uint32_t, uint32_t> index(
             diskann::Metric::L2, 
-            data_dim, 
-            data_num,
-            std::make_shared<diskann::IndexWriteParameters>(index_build_params),
-            nullptr, // 搜索参数
+            query_dim, 
+            0,      // max_points (will be set when loading)
+            nullptr, // 构建参数
+            search_params,
             0,       // frozen points
             false,   // dynamic index
             false,   // enable tags
@@ -141,23 +151,9 @@ int main(int argc, char **argv) {
             false    // filtered index
         );
 
-        auto build_start = std::chrono::high_resolution_clock::now();
-        index.build(data_file.c_str(), data_num);
-        auto build_end = std::chrono::high_resolution_clock::now();
-        auto build_time = std::chrono::duration_cast<std::chrono::milliseconds>(build_end - build_start);
-        std::cout << "索引构建完成，耗时: " << build_time.count() << " ms" << std::endl;
-
-        index.save(index_prefix.c_str());
-
-        size_t query_num, query_dim;
-        diskann::get_bin_metadata(query_file, query_num, query_dim);
-        
-        if (query_dim != data_dim) {
-            std::cerr << "错误: 查询数据维度不匹配" << std::endl;
-            return -1;
-        }
-
-        test_queries = std::min(test_queries, (uint32_t)query_num);
+        std::cout << "加载索引: " << index_prefix << std::endl;
+        index.load(index_prefix.c_str(), num_threads, search_L_vec[0]);
+        std::cout << "索引加载完成" << std::endl;
 
         // 读取查询数据
         uint8_t *query_data = nullptr;
@@ -184,6 +180,7 @@ int main(int argc, char **argv) {
             std::cout << "警告: 未找到ground truth文件 " << gt_file << "，跳过recall计算" << std::endl;
         }
 
+        std::cout << "\n开始搜索测试..." << std::endl;
         std::cout.setf(std::ios_base::fixed, std::ios_base::floatfield);
         std::cout.precision(2);
         
@@ -268,13 +265,12 @@ int main(int argc, char **argv) {
         }
 
         std::cout << std::string(table_width, '=') << std::endl;
+        std::cout << "搜索测试完成！" << std::endl;
 
         // 清理内存
         delete[] query_data;
         if (gt_ids) delete[] gt_ids;
         if (gt_dists) delete[] gt_dists;
-        
-        std::cout << "索引已保存到: " << index_prefix << ".*" << std::endl;
 
         return 0;
 
