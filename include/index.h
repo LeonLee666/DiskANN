@@ -264,6 +264,19 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                     InMemQueryScratch<T> *scratch, bool use_filter = false,
                                     uint32_t filteredLindex = 0);
 
+    // Grid-aware 2D index building: multi-stage neighbor search and pruning
+    void search_for_point_and_prune_2d_grid(int location, std::vector<uint32_t> &pruned_list,
+                                            InMemQueryScratch<T> *scratch);
+
+    // Helper functions for grid-aware building
+    void get_grid_neighbors_in_range(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
+                                    std::vector<uint32_t> &candidate_pool, InMemQueryScratch<T> *scratch);
+    
+    std::pair<uint32_t, uint32_t> get_grid_coordinates(uint32_t location);
+    
+    bool is_in_grid_range(uint32_t grid_x, uint32_t grid_y, uint32_t center_x, uint32_t center_y,
+                         uint32_t min_range, uint32_t max_range);
+
     void prune_neighbors(const uint32_t location, std::vector<Neighbor> &pool, std::vector<uint32_t> &pruned_list,
                          InMemQueryScratch<T> *scratch);
 

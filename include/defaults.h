@@ -30,5 +30,19 @@ const uint32_t MAX_DEGREE = 64;
 const uint32_t BUILD_LIST_SIZE = 100;
 const uint32_t SATURATE_GRAPH = false;
 const uint32_t SEARCH_LIST_SIZE = 100;
+
+// Grid-aware 2D index building parameters
+const uint32_t GRID_SIZE_2D = 32;           // 32x32 grid for 256x256 space
+const uint32_t GRID_CELL_SIZE_2D = 8;       // Each grid cell is 8x8 pixels
+
+// Stage-wise neighbor selection limits for 2D grid-aware building
+const uint32_t STAGE1_MAX_NEIGHBORS = 8;    // 3x3 grid neighbors
+const uint32_t STAGE2_MAX_NEIGHBORS = 6;    // 4x4 grid outer ring neighbors  
+const uint32_t STAGE3_MAX_NEIGHBORS = 4;    // 5x5 grid outer ring neighbors
+
+// Search parameters for each stage
+const uint32_t STAGE1_SEARCH_LIST_SIZE = 50;
+const uint32_t STAGE2_SEARCH_LIST_SIZE = 40;
+const uint32_t STAGE3_SEARCH_LIST_SIZE = 30;
 } // namespace defaults
 } // namespace diskann
