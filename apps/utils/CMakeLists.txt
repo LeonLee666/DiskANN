@@ -83,6 +83,8 @@ target_link_libraries(extract_first_n_vectors ${PROJECT_NAME})
 
 add_executable(generate_uniform_2d_points generate_uniform_2d_points.cpp)
 
+add_executable(generate_uniform_3d_points generate_uniform_3d_points.cpp)
+
 if (NOT MSVC)
     include(GNUInstallDirs)
     install(TARGETS fvecs_to_bin
@@ -112,6 +114,7 @@ if (NOT MSVC)
             stats_label_data
             extract_first_n_vectors
             generate_uniform_2d_points
+            generate_uniform_3d_points
             RUNTIME
     )
 endif()
