@@ -44,5 +44,19 @@ const uint32_t STAGE3_MAX_NEIGHBORS = 3;    // 7x7 but exclude 5x5 area (2 < gri
 const uint32_t STAGE1_SEARCH_LIST_SIZE = 90;
 const uint32_t STAGE2_SEARCH_LIST_SIZE = 160;
 const uint32_t STAGE3_SEARCH_LIST_SIZE = 240;
+
+// Grid-aware 3D index building parameters
+const uint32_t GRID_SIZE_3D = 21;           // 21x21x21 grid for 256x256x256 space  
+const uint32_t GRID_CELL_SIZE_3D = 12;      // Each grid cell is 12x12x12 voxels
+
+// Stage-wise neighbor selection limits for 3D grid-aware building
+const uint32_t STAGE1_MAX_NEIGHBORS_3D = 4;    // 3x3x3 grid neighbors (grid distance ≤ 1)
+const uint32_t STAGE2_MAX_NEIGHBORS_3D = 2;    // 5x5x5 but exclude 3x3x3 area (1 < grid distance ≤ 2)
+const uint32_t STAGE3_MAX_NEIGHBORS_3D = 1;    // 7x7x7 but exclude 5x5x5 area (2 < grid distance ≤ 3)
+
+// Search parameters for each stage in 3D
+const uint32_t STAGE1_SEARCH_LIST_SIZE_3D = 35;
+const uint32_t STAGE2_SEARCH_LIST_SIZE_3D = 140;
+const uint32_t STAGE3_SEARCH_LIST_SIZE_3D = 380;
 } // namespace defaults
 } // namespace diskann
