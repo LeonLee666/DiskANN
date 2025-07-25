@@ -78,6 +78,9 @@ target_link_libraries(generate_synthetic_labels ${PROJECT_NAME} Boost::program_o
 add_executable(stats_label_data stats_label_data.cpp)
 target_link_libraries(stats_label_data ${PROJECT_NAME} Boost::program_options)
 
+add_executable(extract_first_n_vectors extract_first_n_vectors.cpp)
+target_link_libraries(extract_first_n_vectors ${PROJECT_NAME})
+
 if (NOT MSVC)
     include(GNUInstallDirs)
     install(TARGETS fvecs_to_bin
@@ -105,6 +108,7 @@ if (NOT MSVC)
             create_disk_layout
             generate_synthetic_labels
             stats_label_data
+            extract_first_n_vectors
             RUNTIME
     )
 endif()
