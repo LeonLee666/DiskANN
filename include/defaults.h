@@ -31,32 +31,22 @@ const uint32_t BUILD_LIST_SIZE = 100;
 const uint32_t SATURATE_GRAPH = false;
 const uint32_t SEARCH_LIST_SIZE = 100;
 
-// Grid-aware 2D index building parameters
-const uint32_t GRID_SIZE_2D = 32;           // 32x32 grid for 256x256 space
-const uint32_t GRID_CELL_SIZE_2D = 8;       // Each grid cell is 8x8 pixels
+// PQ-based Grid-aware index building parameters  
+const uint32_t PQ_GRID_SIZE = 256;          // 256x256 grid from PQ quantization (0-255 per dimension)
 
-// Stage-wise neighbor selection limits for 2D grid-aware building
-const uint32_t STAGE1_MAX_NEIGHBORS = 3;    // 3x3 grid neighbors (grid distance ≤ 1)
-const uint32_t STAGE2_MAX_NEIGHBORS = 3;    // 5x5 but exclude 3x3 area (1 < grid distance ≤ 2)
-const uint32_t STAGE3_MAX_NEIGHBORS = 3;    // 7x7 but exclude 5x5 area (2 < grid distance ≤ 3)
+// Configurable stage ranges for grid-aware building (Chebyshev distance)
+const uint32_t STAGE1_GRID_RANGE = 16;       // Stage 1: grid distance ≤ 1 (e.g., 3x3)
+const uint32_t STAGE2_GRID_RANGE = 32;       // Stage 2: grid distance ≤ 2 (e.g., 5x5) 
+const uint32_t STAGE3_GRID_RANGE = 64;       // Stage 3: grid distance ≤ 3 (e.g., 7x7)
+
+// Stage-wise neighbor selection limits for PQ grid-aware building
+const uint32_t PQ_STAGE1_MAX_NEIGHBORS = 16;    // Stage 1 max neighbors
+const uint32_t PQ_STAGE2_MAX_NEIGHBORS = 8;    // Stage 2 max neighbors  
+const uint32_t PQ_STAGE3_MAX_NEIGHBORS = 4;    // Stage 3 max neighbors
 
 // Search parameters for each stage
-const uint32_t STAGE1_SEARCH_LIST_SIZE = 90;
-const uint32_t STAGE2_SEARCH_LIST_SIZE = 160;
-const uint32_t STAGE3_SEARCH_LIST_SIZE = 240;
-
-// Grid-aware 3D index building parameters
-const uint32_t GRID_SIZE_3D = 21;           // 21x21x21 grid for 256x256x256 space  
-const uint32_t GRID_CELL_SIZE_3D = 12;      // Each grid cell is 12x12x12 voxels
-
-// Stage-wise neighbor selection limits for 3D grid-aware building
-const uint32_t STAGE1_MAX_NEIGHBORS_3D = 4;    // 3x3x3 grid neighbors (grid distance ≤ 1)
-const uint32_t STAGE2_MAX_NEIGHBORS_3D = 2;    // 5x5x5 but exclude 3x3x3 area (1 < grid distance ≤ 2)
-const uint32_t STAGE3_MAX_NEIGHBORS_3D = 1;    // 7x7x7 but exclude 5x5x5 area (2 < grid distance ≤ 3)
-
-// Search parameters for each stage in 3D
-const uint32_t STAGE1_SEARCH_LIST_SIZE_3D = 35;
-const uint32_t STAGE2_SEARCH_LIST_SIZE_3D = 140;
-const uint32_t STAGE3_SEARCH_LIST_SIZE_3D = 380;
+const uint32_t PQ_STAGE1_SEARCH_LIST_SIZE = 500;
+const uint32_t PQ_STAGE2_SEARCH_LIST_SIZE = 500;
+const uint32_t PQ_STAGE3_SEARCH_LIST_SIZE = 500;
 } // namespace defaults
 } // namespace diskann

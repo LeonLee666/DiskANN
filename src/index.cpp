@@ -4,6 +4,8 @@
 #include <omp.h>
 
 #include <type_traits>
+#include <random>
+#include <map>
 
 #include "boost/dynamic_bitset.hpp"
 #include "index_factory.h"
@@ -13,6 +15,7 @@
 #include "tsl/robin_set.h"
 #include "windows_customizations.h"
 #include "tag_uint128.h"
+#include "pq.h"
 #if defined(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS) && defined(DISKANN_BUILD)
 #include "gperftools/malloc_extension.h"
 #endif
@@ -1283,9 +1286,9 @@ void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pru
     inter_insert(n, pruned_list, _indexingRange, scratch);
 }
 
-// Grid-aware 2D index building implementation
+// PQ-based Grid-aware index building implementation for high-dimensional vectors
 template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, std::vector<uint32_t> &pruned_list,
+void Index<T, TagT, LabelT>::search_for_point_and_prune_pq_grid(int location, std::vector<uint32_t> &pruned_list,
                                                                 InMemQueryScratch<T> *scratch)
 {
     if (pruned_list.size() > 0)
@@ -1295,11 +1298,11 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
 
     // Vector to store all candidate neighbors from all stages
     std::vector<uint32_t> all_candidates;
-    all_candidates.reserve(defaults::STAGE1_SEARCH_LIST_SIZE + defaults::STAGE2_SEARCH_LIST_SIZE + defaults::STAGE3_SEARCH_LIST_SIZE);
+    all_candidates.reserve(defaults::PQ_STAGE1_SEARCH_LIST_SIZE + defaults::PQ_STAGE2_SEARCH_LIST_SIZE + defaults::PQ_STAGE3_SEARCH_LIST_SIZE);
     
-    // Stage 1: 3x3 grid neighbors (grid distance <= 1), create up to 4 edges
+    // Stage 1: candidates within STAGE1_GRID_RANGE
     std::vector<uint32_t> stage1_candidates;
-    get_grid_neighbors_in_range(location, 0, 1, stage1_candidates, scratch);
+    get_pq_grid_neighbors_in_range(location, 0, defaults::STAGE1_GRID_RANGE, stage1_candidates, scratch);
     
     // Convert to Neighbor objects and sort by distance
     _data_store->get_vector(location, scratch->aligned_query());
@@ -1314,13 +1317,13 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
     }
     std::sort(stage1_pool.begin(), stage1_pool.end());
     
-    // Prune Stage 1 neighbors - limit to 4 edges
+    // Prune Stage 1 neighbors using RNG on original coordinates
     std::vector<uint32_t> stage1_pruned;
     if (stage1_pool.size() > 0)
     {
-        if (stage1_pool.size() > defaults::STAGE1_SEARCH_LIST_SIZE)
-            stage1_pool.resize(defaults::STAGE1_SEARCH_LIST_SIZE);
-        occlude_list(location, stage1_pool, _indexingAlpha, defaults::STAGE1_MAX_NEIGHBORS,
+        if (stage1_pool.size() > defaults::PQ_STAGE1_SEARCH_LIST_SIZE)
+            stage1_pool.resize(defaults::PQ_STAGE1_SEARCH_LIST_SIZE);
+        occlude_list(location, stage1_pool, _indexingAlpha, defaults::PQ_STAGE1_MAX_NEIGHBORS,
                     _indexingMaxC, stage1_pruned, scratch);
     }
     
@@ -1330,9 +1333,9 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
         all_candidates.push_back(neighbor);
     }
     
-    // Stage 2: 5x5 grid but exclude 3x3 area (1 < grid distance <= 2), create up to 3 edges
+    // Stage 2: candidates within STAGE2_GRID_RANGE but excluding STAGE1_GRID_RANGE
     std::vector<uint32_t> stage2_candidates;
-    get_grid_neighbors_in_range(location, 2, 2, stage2_candidates, scratch);
+    get_pq_grid_neighbors_in_range(location, defaults::STAGE1_GRID_RANGE + 1, defaults::STAGE2_GRID_RANGE, stage2_candidates, scratch);
     
     std::vector<Neighbor> stage2_pool;
     for (auto candidate : stage2_candidates)
@@ -1345,13 +1348,13 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
     }
     std::sort(stage2_pool.begin(), stage2_pool.end());
     
-    // Prune Stage 2 neighbors - limit to 3 edges
+    // Prune Stage 2 neighbors using RNG on original coordinates
     std::vector<uint32_t> stage2_pruned;
     if (stage2_pool.size() > 0)
     {
-        if (stage2_pool.size() > defaults::STAGE2_SEARCH_LIST_SIZE)
-            stage2_pool.resize(defaults::STAGE2_SEARCH_LIST_SIZE);
-        occlude_list(location, stage2_pool, _indexingAlpha, defaults::STAGE2_MAX_NEIGHBORS,
+        if (stage2_pool.size() > defaults::PQ_STAGE2_SEARCH_LIST_SIZE)
+            stage2_pool.resize(defaults::PQ_STAGE2_SEARCH_LIST_SIZE);
+        occlude_list(location, stage2_pool, _indexingAlpha, defaults::PQ_STAGE2_MAX_NEIGHBORS,
                     _indexingMaxC, stage2_pruned, scratch);
     }
     
@@ -1361,9 +1364,9 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
         all_candidates.push_back(neighbor);
     }
     
-    // Stage 3: 7x7 grid but exclude 5x5 area (2 < grid distance <= 3), create up to 2 edges  
+    // Stage 3: candidates within STAGE3_GRID_RANGE but excluding STAGE2_GRID_RANGE
     std::vector<uint32_t> stage3_candidates;
-    get_grid_neighbors_in_range(location, 3, 3, stage3_candidates, scratch);
+    get_pq_grid_neighbors_in_range(location, defaults::STAGE2_GRID_RANGE + 1, defaults::STAGE3_GRID_RANGE, stage3_candidates, scratch);
     
     std::vector<Neighbor> stage3_pool;
     for (auto candidate : stage3_candidates)
@@ -1376,13 +1379,13 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
     }
     std::sort(stage3_pool.begin(), stage3_pool.end());
     
-    // Prune Stage 3 neighbors - limit to 2 edges
+    // Prune Stage 3 neighbors using RNG on original coordinates
     std::vector<uint32_t> stage3_pruned;
     if (stage3_pool.size() > 0)
     {
-        if (stage3_pool.size() > defaults::STAGE3_SEARCH_LIST_SIZE)
-            stage3_pool.resize(defaults::STAGE3_SEARCH_LIST_SIZE);
-        occlude_list(location, stage3_pool, _indexingAlpha, defaults::STAGE3_MAX_NEIGHBORS,
+        if (stage3_pool.size() > defaults::PQ_STAGE3_SEARCH_LIST_SIZE)
+            stage3_pool.resize(defaults::PQ_STAGE3_SEARCH_LIST_SIZE);
+        occlude_list(location, stage3_pool, _indexingAlpha, defaults::PQ_STAGE3_MAX_NEIGHBORS,
                     _indexingMaxC, stage3_pruned, scratch);
     }
     
@@ -1417,67 +1420,304 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_2d_grid(int location, st
 }
 
 template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::get_grid_neighbors_in_range(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
-                                                        std::vector<uint32_t> &candidate_pool, InMemQueryScratch<T> *scratch)
+void Index<T, TagT, LabelT>::get_pq_grid_neighbors_in_range(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
+                                                           std::vector<uint32_t> &candidate_pool, InMemQueryScratch<T> *scratch)
 {
     candidate_pool.clear();
     
-    // Get center grid coordinates
-    auto [center_x, center_y] = get_grid_coordinates(location);
-    
-    // Search all points and find those in the specified grid range
-    for (uint32_t point_id = 0; point_id < _nd; point_id++)
-    {
-        if (point_id == location) continue;
-        
-        auto [point_x, point_y] = get_grid_coordinates(point_id);
-        
-        if (is_in_grid_range(point_x, point_y, center_x, center_y, min_grid_range, max_grid_range))
-        {
-            candidate_pool.push_back(point_id);
-        }
+    // Ensure grid-to-locations mapping is built
+    if (!_grid_to_locations_built) {
+        _build_grid_to_locations_map();
     }
     
-    // Also check frozen points if they exist
-    for (uint32_t frozen_id = (uint32_t)_max_points; frozen_id < _max_points + _num_frozen_pts; frozen_id++)
-    {
-        if (frozen_id == location) continue;
-        
-        auto [point_x, point_y] = get_grid_coordinates(frozen_id);
-        
-        if (is_in_grid_range(point_x, point_y, center_x, center_y, min_grid_range, max_grid_range))
-        {
-            candidate_pool.push_back(frozen_id);
+    // Get center PQ grid coordinates from cache
+    if (location >= _pq_grid_coords_cache.size()) {
+        return; // Invalid location
+    }
+    auto [center_x, center_y] = _pq_grid_coords_cache[location];
+    
+    // Iterate through all grid coordinates in the specified range
+    for (int dx = -static_cast<int>(max_grid_range); dx <= static_cast<int>(max_grid_range); ++dx) {
+        for (int dy = -static_cast<int>(max_grid_range); dy <= static_cast<int>(max_grid_range); ++dy) {
+            // Calculate target grid coordinates
+            int target_x = static_cast<int>(center_x) + dx;
+            int target_y = static_cast<int>(center_y) + dy;
+            
+            // Check bounds (0-255 for uint8_t)
+            if (target_x < 0 || target_x > 255 || target_y < 0 || target_y > 255) {
+                continue;
+            }
+            
+            uint8_t grid_x = static_cast<uint8_t>(target_x);
+            uint8_t grid_y = static_cast<uint8_t>(target_y);
+            
+            // Check if this grid coordinate is in the valid range
+            if (is_in_pq_grid_range(grid_x, grid_y, center_x, center_y, min_grid_range, max_grid_range)) {
+                std::pair<uint8_t, uint8_t> grid_coord = {grid_x, grid_y};
+                
+                // Find all points in this grid coordinate
+                auto it = _grid_to_locations.find(grid_coord);
+                if (it != _grid_to_locations.end()) {
+                    for (uint32_t point_id : it->second) {
+                        if (point_id != location) {  // Exclude the query point itself
+                            candidate_pool.push_back(point_id);
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 template <typename T, typename TagT, typename LabelT>
-std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::get_grid_coordinates(uint32_t location)
+std::pair<uint8_t, uint8_t> Index<T, TagT, LabelT>::get_pq_grid_coordinates(uint32_t location)
 {
-    // Get the 2D coordinates from the data store
-    // This function is only called for uint8_t data type and 2-dimensional data
-    if (_dim != 2)
-    {
-        throw diskann::ANNException("Grid-aware building only supports 2-dimensional data", -1, __FUNCSIG__, __FILE__, __LINE__);
+    // Ensure cache is computed
+    if (!_pq_grid_coords_cached) {
+        _compute_pq_grid_coords_cache();
     }
     
-    uint8_t coords[2];
-    _data_store->get_vector(location, (T*)coords);
+    // Return cached coordinates
+    if (location < _pq_grid_coords_cache.size()) {
+        return _pq_grid_coords_cache[location];
+    }
     
-    uint32_t grid_x = coords[0] / defaults::GRID_CELL_SIZE_2D;
-    uint32_t grid_y = coords[1] / defaults::GRID_CELL_SIZE_2D;
+    // Fallback for points not in cache (shouldn't happen in normal operation)
+    diskann::cout << "Warning: location " << location << " not found in PQ grid cache, falling back to direct computation" << std::endl;
     
-    // Ensure grid coordinates are within bounds
-    if (grid_x >= defaults::GRID_SIZE_2D) grid_x = defaults::GRID_SIZE_2D - 1;
-    if (grid_y >= defaults::GRID_SIZE_2D) grid_y = defaults::GRID_SIZE_2D - 1;
+    // Get the high-dimensional vector
+    std::vector<T> vector_data(_dim);
+    _data_store->get_vector(location, vector_data.data());
+    
+    // Fallback to hash-based approach
+    uint64_t hash1 = 0, hash2 = 0;
+    for (size_t i = 0; i < _dim; i += 2) {
+        hash1 = hash1 * 131 + static_cast<uint64_t>(vector_data[i]);
+        if (i + 1 < _dim) {
+            hash2 = hash2 * 131 + static_cast<uint64_t>(vector_data[i + 1]);
+        }
+    }
+    uint8_t grid_x = static_cast<uint8_t>(hash1 % defaults::PQ_GRID_SIZE);
+    uint8_t grid_y = static_cast<uint8_t>(hash2 % defaults::PQ_GRID_SIZE);
     
     return std::make_pair(grid_x, grid_y);
 }
 
 template <typename T, typename TagT, typename LabelT>
-bool Index<T, TagT, LabelT>::is_in_grid_range(uint32_t grid_x, uint32_t grid_y, uint32_t center_x, uint32_t center_y,
-                                             uint32_t min_range, uint32_t max_range)
+void Index<T, TagT, LabelT>::_init_pq_pivots() const
+{
+    if (_pq_pivots_initialized) {
+        return;  // Already initialized
+    }
+    
+    // Only proceed if we have enough dimensions and data points for PQ
+    const size_t num_pq_chunks = 2;
+    if (_dim < 4 || _dim % num_pq_chunks != 0 || _nd < 1000) {
+        diskann::cout << "Warning: PQ grid initialization skipped due to insufficient data or dimensions" << std::endl;
+        _pq_pivots_initialized = true;
+        return;
+    }
+    
+    // Sample training data (use up to 10000 points or 10% of data, whichever is smaller)
+    size_t max_train_size = std::min({_nd, static_cast<size_t>(10000), static_cast<size_t>(_nd * 0.1)});
+    if (max_train_size < 256) {
+        max_train_size = std::min(_nd, static_cast<size_t>(256));  // Minimum training size
+    }
+    
+    std::vector<float> train_data(max_train_size * _dim);
+    
+    // Random sampling of training data
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<uint32_t> dist(0, _nd - 1);
+    
+    for (size_t i = 0; i < max_train_size; ++i) {
+        uint32_t sample_idx = dist(gen);
+        std::vector<T> point_data(_dim);
+        _data_store->get_vector(sample_idx, point_data.data());
+        
+        // Convert to float
+        for (size_t j = 0; j < _dim; ++j) {
+            train_data[i * _dim + j] = static_cast<float>(point_data[j]);
+        }
+    }
+    
+    // Train PQ pivots
+    std::vector<float> pivot_data;
+    int result = diskann::generate_pq_pivots_simplified(
+        train_data.data(), max_train_size, _dim, num_pq_chunks, pivot_data
+    );
+    
+    if (result == 0) {
+        _pq_pivots = std::move(pivot_data);
+        diskann::cout << "PQ pivots trained successfully with " << max_train_size 
+                      << " samples, " << _dim << " dimensions, " << num_pq_chunks << " chunks" << std::endl;
+    } else {
+        diskann::cout << "Warning: PQ pivot training failed, grid quantization will use fallback method" << std::endl;
+    }
+    
+    _pq_pivots_initialized = true;
+}
+
+template <typename T, typename TagT, typename LabelT>
+void Index<T, TagT, LabelT>::_compute_pq_grid_coords_cache() const
+{
+    if (_pq_grid_coords_cached) {
+        return;  // Already cached
+    }
+    
+    // Ensure PQ pivots are initialized first
+    if (!_pq_pivots_initialized) {
+        _init_pq_pivots();
+    }
+    
+    // Reserve space for all points including frozen points
+    size_t total_points = _max_points + _num_frozen_pts;
+    _pq_grid_coords_cache.resize(total_points);
+    
+    diskann::cout << "Computing PQ grid coordinates cache for " << total_points << " points..." << std::flush;
+    
+    const size_t num_pq_chunks = 2;
+    std::vector<float> float_data(_dim);
+    std::vector<uint8_t> pq_codes(num_pq_chunks);
+    
+    // Compute coordinates for regular points
+    for (uint32_t point_id = 0; point_id < _nd; ++point_id) {
+        std::vector<T> point_data(_dim);
+        _data_store->get_vector(point_id, point_data.data());
+        
+        // Convert to float for PQ quantization
+        for (size_t i = 0; i < _dim; ++i) {
+            float_data[i] = static_cast<float>(point_data[i]);
+        }
+        
+        // Perform PQ quantization
+        if (!_pq_pivots.empty()) {
+            int result = diskann::generate_pq_data_from_pivots_simplified(
+                float_data.data(), 1, _pq_pivots.data(), _pq_pivots.size(), 
+                _dim, num_pq_chunks, pq_codes
+            );
+            
+            if (result == 0 && pq_codes.size() == 2) {
+                _pq_grid_coords_cache[point_id] = {pq_codes[0], pq_codes[1]};
+            } else {
+                // Fallback to hash method
+                uint64_t hash1 = 0, hash2 = 0;
+                for (size_t i = 0; i < _dim; i += 2) {
+                    hash1 = hash1 * 131 + static_cast<uint64_t>(point_data[i]);
+                    if (i + 1 < _dim) {
+                        hash2 = hash2 * 131 + static_cast<uint64_t>(point_data[i + 1]);
+                    }
+                }
+                uint8_t grid_x = static_cast<uint8_t>(hash1 % defaults::PQ_GRID_SIZE);
+                uint8_t grid_y = static_cast<uint8_t>(hash2 % defaults::PQ_GRID_SIZE);
+                _pq_grid_coords_cache[point_id] = {grid_x, grid_y};
+            }
+        } else {
+            // Fallback to hash method when PQ is not available
+            uint64_t hash1 = 0, hash2 = 0;
+            for (size_t i = 0; i < _dim; i += 2) {
+                hash1 = hash1 * 131 + static_cast<uint64_t>(point_data[i]);
+                if (i + 1 < _dim) {
+                    hash2 = hash2 * 131 + static_cast<uint64_t>(point_data[i + 1]);
+                }
+            }
+            uint8_t grid_x = static_cast<uint8_t>(hash1 % defaults::PQ_GRID_SIZE);
+            uint8_t grid_y = static_cast<uint8_t>(hash2 % defaults::PQ_GRID_SIZE);
+            _pq_grid_coords_cache[point_id] = {grid_x, grid_y};
+        }
+    }
+    
+    // Compute coordinates for frozen points if they exist
+    for (uint32_t frozen_id = _max_points; frozen_id < _max_points + _num_frozen_pts; ++frozen_id) {
+        std::vector<T> point_data(_dim);
+        _data_store->get_vector(frozen_id, point_data.data());
+        
+        // Convert to float for PQ quantization
+        for (size_t i = 0; i < _dim; ++i) {
+            float_data[i] = static_cast<float>(point_data[i]);
+        }
+        
+        // Perform PQ quantization
+        if (!_pq_pivots.empty()) {
+            int result = diskann::generate_pq_data_from_pivots_simplified(
+                float_data.data(), 1, _pq_pivots.data(), _pq_pivots.size(), 
+                _dim, num_pq_chunks, pq_codes
+            );
+            
+            if (result == 0 && pq_codes.size() == 2) {
+                _pq_grid_coords_cache[frozen_id] = {pq_codes[0], pq_codes[1]};
+            } else {
+                // Fallback to hash method
+                uint64_t hash1 = 0, hash2 = 0;
+                for (size_t i = 0; i < _dim; i += 2) {
+                    hash1 = hash1 * 131 + static_cast<uint64_t>(point_data[i]);
+                    if (i + 1 < _dim) {
+                        hash2 = hash2 * 131 + static_cast<uint64_t>(point_data[i + 1]);
+                    }
+                }
+                uint8_t grid_x = static_cast<uint8_t>(hash1 % defaults::PQ_GRID_SIZE);
+                uint8_t grid_y = static_cast<uint8_t>(hash2 % defaults::PQ_GRID_SIZE);
+                _pq_grid_coords_cache[frozen_id] = {grid_x, grid_y};
+            }
+        } else {
+            // Fallback to hash method when PQ is not available
+            uint64_t hash1 = 0, hash2 = 0;
+            for (size_t i = 0; i < _dim; i += 2) {
+                hash1 = hash1 * 131 + static_cast<uint64_t>(point_data[i]);
+                if (i + 1 < _dim) {
+                    hash2 = hash2 * 131 + static_cast<uint64_t>(point_data[i + 1]);
+                }
+            }
+            uint8_t grid_x = static_cast<uint8_t>(hash1 % defaults::PQ_GRID_SIZE);
+            uint8_t grid_y = static_cast<uint8_t>(hash2 % defaults::PQ_GRID_SIZE);
+            _pq_grid_coords_cache[frozen_id] = {grid_x, grid_y};
+        }
+    }
+    
+    _pq_grid_coords_cached = true;
+    diskann::cout << "done." << std::endl;
+}
+
+template <typename T, typename TagT, typename LabelT>
+void Index<T, TagT, LabelT>::_build_grid_to_locations_map() const
+{
+    if (_grid_to_locations_built) {
+        return;  // Already built
+    }
+    
+    // Ensure PQ grid coordinates cache is ready
+    if (!_pq_grid_coords_cached) {
+        _compute_pq_grid_coords_cache();
+    }
+    
+    diskann::cout << "Building grid-to-locations mapping..." << std::flush;
+    
+    _grid_to_locations.clear();
+    
+    // Process regular points
+    for (uint32_t point_id = 0; point_id < _nd; ++point_id) {
+        if (point_id < _pq_grid_coords_cache.size()) {
+            auto grid_coord = _pq_grid_coords_cache[point_id];
+            _grid_to_locations[grid_coord].push_back(point_id);
+        }
+    }
+    
+    // Process frozen points
+    for (uint32_t frozen_id = _max_points; frozen_id < _max_points + _num_frozen_pts; ++frozen_id) {
+        if (frozen_id < _pq_grid_coords_cache.size()) {
+            auto grid_coord = _pq_grid_coords_cache[frozen_id];
+            _grid_to_locations[grid_coord].push_back(frozen_id);
+        }
+    }
+    
+    _grid_to_locations_built = true;
+    diskann::cout << "done. Created mapping for " << _grid_to_locations.size() << " unique grid coordinates." << std::endl;
+}
+
+template <typename T, typename TagT, typename LabelT>
+bool Index<T, TagT, LabelT>::is_in_pq_grid_range(uint8_t grid_x, uint8_t grid_y, uint8_t center_x, uint8_t center_y,
+                                                 uint32_t min_range, uint32_t max_range)
 {
     // Calculate grid distance (Chebyshev distance)
     uint32_t dx = (grid_x > center_x) ? (grid_x - center_x) : (center_x - grid_x);
@@ -1487,219 +1727,23 @@ bool Index<T, TagT, LabelT>::is_in_grid_range(uint32_t grid_x, uint32_t grid_y, 
     return grid_distance >= min_range && grid_distance <= max_range;
 }
 
-// Grid-aware 3D index building implementation
-template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::search_for_point_and_prune_3d_grid(int location, std::vector<uint32_t> &pruned_list,
-                                                                InMemQueryScratch<T> *scratch)
-{
-    if (pruned_list.size() > 0)
-    {
-        throw diskann::ANNException("ERROR: non-empty pruned_list passed", -1, __FUNCSIG__, __FILE__, __LINE__);
-    }
 
-    // Vector to store all candidate neighbors from all stages
-    std::vector<uint32_t> all_candidates;
-    all_candidates.reserve(defaults::STAGE1_SEARCH_LIST_SIZE_3D + defaults::STAGE2_SEARCH_LIST_SIZE_3D + defaults::STAGE3_SEARCH_LIST_SIZE_3D);
-    
-    // Stage 1: 3x3x3 grid neighbors (grid distance <= 1), create up to 4 edges
-    std::vector<uint32_t> stage1_candidates;
-    get_grid_neighbors_in_range_3d(location, 0, 1, stage1_candidates, scratch);
-    
-    // Convert to Neighbor objects and sort by distance
-    _data_store->get_vector(location, scratch->aligned_query());
-    std::vector<Neighbor> stage1_pool;
-    for (auto candidate : stage1_candidates)
-    {
-        if (candidate != (uint32_t)location)
-        {
-            float dist = _data_store->get_distance(location, candidate);
-            stage1_pool.emplace_back(Neighbor(candidate, dist));
-        }
-    }
-    std::sort(stage1_pool.begin(), stage1_pool.end());
-    
-    // Prune Stage 1 neighbors - limit to stage1_max_neighbors edges
-    std::vector<uint32_t> stage1_pruned;
-    if (stage1_pool.size() > 0)
-    {
-        if (stage1_pool.size() > defaults::STAGE1_SEARCH_LIST_SIZE_3D)
-            stage1_pool.resize(defaults::STAGE1_SEARCH_LIST_SIZE_3D);
-        occlude_list(location, stage1_pool, _indexingAlpha, defaults::STAGE1_MAX_NEIGHBORS_3D,
-                    _indexingMaxC, stage1_pruned, scratch);
-    }
-    
-    // Add Stage 1 results to final list
-    for (auto neighbor : stage1_pruned)
-    {
-        all_candidates.push_back(neighbor);
-    }
-    
-    // Stage 2: 5x5x5 grid but exclude 3x3x3 area (1 < grid distance <= 2), create up to 3 edges
-    std::vector<uint32_t> stage2_candidates;
-    get_grid_neighbors_in_range_3d(location, 2, 3, stage2_candidates, scratch);
-    
-    std::vector<Neighbor> stage2_pool;
-    for (auto candidate : stage2_candidates)
-    {
-        if (candidate != (uint32_t)location)
-        {
-            float dist = _data_store->get_distance(location, candidate);
-            stage2_pool.emplace_back(Neighbor(candidate, dist));
-        }
-    }
-    std::sort(stage2_pool.begin(), stage2_pool.end());
-    
-    // Prune Stage 2 neighbors - limit to stage2_max_neighbors edges
-    std::vector<uint32_t> stage2_pruned;
-    if (stage2_pool.size() > 0)
-    {
-        if (stage2_pool.size() > defaults::STAGE2_SEARCH_LIST_SIZE_3D)
-            stage2_pool.resize(defaults::STAGE2_SEARCH_LIST_SIZE_3D);
-        occlude_list(location, stage2_pool, _indexingAlpha, defaults::STAGE2_MAX_NEIGHBORS_3D,
-                    _indexingMaxC, stage2_pruned, scratch);
-    }
-    
-    // Add Stage 2 results to final list
-    for (auto neighbor : stage2_pruned)
-    {
-        all_candidates.push_back(neighbor);
-    }
-    
-    // Stage 3: 7x7x7 grid but exclude 5x5x5 area (2 < grid distance <= 3), create up to 2 edges  
-    std::vector<uint32_t> stage3_candidates;
-    get_grid_neighbors_in_range_3d(location, 4, 5, stage3_candidates, scratch);
-    
-    std::vector<Neighbor> stage3_pool;
-    for (auto candidate : stage3_candidates)
-    {
-        if (candidate != (uint32_t)location)
-        {
-            float dist = _data_store->get_distance(location, candidate);
-            stage3_pool.emplace_back(Neighbor(candidate, dist));
-        }
-    }
-    std::sort(stage3_pool.begin(), stage3_pool.end());
-    
-    // Prune Stage 3 neighbors - limit to stage3_max_neighbors edges
-    std::vector<uint32_t> stage3_pruned;
-    if (stage3_pool.size() > 0)
-    {
-        if (stage3_pool.size() > defaults::STAGE3_SEARCH_LIST_SIZE_3D)
-            stage3_pool.resize(defaults::STAGE3_SEARCH_LIST_SIZE_3D);
-        occlude_list(location, stage3_pool, _indexingAlpha, defaults::STAGE3_MAX_NEIGHBORS_3D,
-                    _indexingMaxC, stage3_pruned, scratch);
-    }
-    
-    // Add Stage 3 results to final list
-    for (auto neighbor : stage3_pruned)
-    {
-        all_candidates.push_back(neighbor);
-    }
-    
-    // Remove duplicates and ensure we have a connection to frozen points if needed
-    tsl::robin_set<uint32_t> unique_candidates;
-    for (auto candidate : all_candidates)
-    {
-        unique_candidates.insert(candidate);
-    }
-    
-    // Ensure connection to frozen points for connectivity
-    if (unique_candidates.empty() && _num_frozen_pts > 0)
-    {
-        unique_candidates.insert(_start);
-    }
-    
-    // Convert to final pruned list
-    pruned_list.clear();
-    pruned_list.reserve(unique_candidates.size());
-    for (auto candidate : unique_candidates)
-    {
-        pruned_list.push_back(candidate);
-    }
-    
-    assert(!pruned_list.empty());
-}
 
-template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::get_grid_neighbors_in_range_3d(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
-                                                           std::vector<uint32_t> &candidate_pool, InMemQueryScratch<T> *scratch)
-{
-    candidate_pool.clear();
-    
-    // Get center grid coordinates
-    auto [center_x, center_y, center_z] = get_grid_coordinates_3d(location);
-    
-    // Search all points and find those in the specified grid range
-    for (uint32_t point_id = 0; point_id < _nd; point_id++)
-    {
-        if (point_id == location) continue;
-        
-        auto [point_x, point_y, point_z] = get_grid_coordinates_3d(point_id);
-        
-        if (is_in_grid_range_3d(point_x, point_y, point_z, center_x, center_y, center_z, min_grid_range, max_grid_range))
-        {
-            candidate_pool.push_back(point_id);
-        }
-    }
-    
-    // Also check frozen points if they exist
-    for (uint32_t frozen_id = (uint32_t)_max_points; frozen_id < _max_points + _num_frozen_pts; frozen_id++)
-    {
-        if (frozen_id == location) continue;
-        
-        auto [point_x, point_y, point_z] = get_grid_coordinates_3d(frozen_id);
-        
-        if (is_in_grid_range_3d(point_x, point_y, point_z, center_x, center_y, center_z, min_grid_range, max_grid_range))
-        {
-            candidate_pool.push_back(frozen_id);
-        }
-    }
-}
-
-template <typename T, typename TagT, typename LabelT>
-std::tuple<uint32_t, uint32_t, uint32_t> Index<T, TagT, LabelT>::get_grid_coordinates_3d(uint32_t location)
-{
-    // Get the 3D coordinates from the data store
-    // This function is only called for uint8_t data type and 3-dimensional data
-    if (_dim != 3)
-    {
-        throw diskann::ANNException("Grid-aware 3D building only supports 3-dimensional data", -1, __FUNCSIG__, __FILE__, __LINE__);
-    }
-    
-    uint8_t coords[3];
-    _data_store->get_vector(location, (T*)coords);
-    
-    uint32_t grid_x = coords[0] / defaults::GRID_CELL_SIZE_3D;
-    uint32_t grid_y = coords[1] / defaults::GRID_CELL_SIZE_3D;
-    uint32_t grid_z = coords[2] / defaults::GRID_CELL_SIZE_3D;
-    
-    // Ensure grid coordinates are within bounds
-    if (grid_x >= defaults::GRID_SIZE_3D) grid_x = defaults::GRID_SIZE_3D - 1;
-    if (grid_y >= defaults::GRID_SIZE_3D) grid_y = defaults::GRID_SIZE_3D - 1;
-    if (grid_z >= defaults::GRID_SIZE_3D) grid_z = defaults::GRID_SIZE_3D - 1;
-    
-    return std::make_tuple(grid_x, grid_y, grid_z);
-}
-
-template <typename T, typename TagT, typename LabelT>
-bool Index<T, TagT, LabelT>::is_in_grid_range_3d(uint32_t grid_x, uint32_t grid_y, uint32_t grid_z,
-                                                 uint32_t center_x, uint32_t center_y, uint32_t center_z,
-                                                 uint32_t min_range, uint32_t max_range)
-{
-    // Calculate grid distance (Chebyshev distance in 3D)
-    uint32_t dx = (grid_x > center_x) ? (grid_x - center_x) : (center_x - grid_x);
-    uint32_t dy = (grid_y > center_y) ? (grid_y - center_y) : (center_y - grid_y);
-    uint32_t dz = (grid_z > center_z) ? (grid_z - center_z) : (center_z - grid_z);
-    uint32_t grid_distance = std::max({dx, dy, dz});
-    
-    return grid_distance >= min_range && grid_distance <= max_range;
-}
 
 template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::link()
 {
     uint32_t num_threads = _indexingThreads;
     if (num_threads != 0)
         omp_set_num_threads(num_threads);
+
+    // Pre-compute PQ grid coordinates cache and grid-to-locations mapping for grid-aware building
+    if constexpr (std::is_same_v<T, float>) {
+        bool use_pq_grid_aware = (!_filtered_index && _dim >= 4);
+        if (use_pq_grid_aware) {
+            _compute_pq_grid_coords_cache();
+            _build_grid_to_locations_map();
+        }
+    }
 
     /* visit_order is a vector that is initialized to the entire graph */
     std::vector<uint32_t> visit_order;
@@ -1735,19 +1779,21 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
         auto scratch = manager.scratch_space();
         std::vector<uint32_t> pruned_list;
         
-        // Check if we should use grid-aware building for 2D/3D uint8 data
-        if constexpr (std::is_same_v<T, uint8_t>)
+        // Check if we should use PQ-based grid-aware building
+        if constexpr (std::is_same_v<T, float>)
         {
-            bool use_grid_aware_2d = (_dim == 2 && !_filtered_index);
-            bool use_grid_aware_3d = (_dim == 3 && !_filtered_index);
+            bool use_pq_grid_aware = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
             
-            if (use_grid_aware_2d)
+            if (use_pq_grid_aware)
             {
-                search_for_point_and_prune_2d_grid(node, pruned_list, scratch);
-            }
-            else if (use_grid_aware_3d)
-            {
-                search_for_point_and_prune_3d_grid(node, pruned_list, scratch);
+                // Cache and mapping should already be computed in link() function, but double-check
+                if (!_pq_grid_coords_cached) {
+                    _compute_pq_grid_coords_cache();
+                }
+                if (!_grid_to_locations_built) {
+                    _build_grid_to_locations_map();
+                }
+                search_for_point_and_prune_pq_grid(node, pruned_list, scratch);
             }
             else if (_filtered_index)
             {
@@ -3418,20 +3464,22 @@ int Index<T, TagT, LabelT>::insert_point(const T *point, const TagT tag, const s
     auto scratch = manager.scratch_space();
     std::vector<uint32_t> pruned_list; // it is the set best candidates to connect to this point
     
-    // Check if we should use grid-aware building for 2D/3D uint8 data
-    if constexpr (std::is_same_v<T, uint8_t>)
+    // Check if we should use PQ-based grid-aware building
+    if constexpr (std::is_same_v<T, float>)
     {
-        bool use_grid_aware_2d = (_dim == 2 && !_filtered_index);
-        bool use_grid_aware_3d = (_dim == 3 && !_filtered_index);
+        bool use_pq_grid_aware = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
         
-        if (use_grid_aware_2d)
-        {
-            search_for_point_and_prune_2d_grid(location, pruned_list, scratch);
-        }
-        else if (use_grid_aware_3d)
-        {
-            search_for_point_and_prune_3d_grid(location, pruned_list, scratch);
-        }
+                    if (use_pq_grid_aware)
+            {
+                // Ensure cache and mapping are computed before using PQ grid-aware search
+                if (!_pq_grid_coords_cached) {
+                    _compute_pq_grid_coords_cache();
+                }
+                if (!_grid_to_locations_built) {
+                    _build_grid_to_locations_map();
+                }
+                search_for_point_and_prune_pq_grid(location, pruned_list, scratch);
+            }
         else if (_filtered_index)
         {
             // when filtered the best_candidates will share the same label ( label_present > distance)

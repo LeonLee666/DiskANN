@@ -28,11 +28,9 @@ target_link_libraries(test_streaming_scenario ${PROJECT_NAME} ${DISKANN_TOOLS_TC
 add_executable(test_insert_deletes_consolidate test_insert_deletes_consolidate.cpp)
 target_link_libraries(test_insert_deletes_consolidate ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS} Boost::program_options)
 
-add_executable(build_2d_grid_index build_2d_grid_index.cpp)
-target_link_libraries(build_2d_grid_index ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
 
-add_executable(build_3d_grid_index build_3d_grid_index.cpp)
-target_link_libraries(build_3d_grid_index ${PROJECT_NAME} ${DISKANN_TOOLS_TCMALLOC_LINK_OPTIONS})
+
+
 
 if (NOT MSVC)
     install(TARGETS build_memory_index
@@ -43,8 +41,6 @@ if (NOT MSVC)
             range_search_disk_index
             test_streaming_scenario
             test_insert_deletes_consolidate
-            build_2d_grid_index
-            build_3d_grid_index
             RUNTIME
     )
 endif()

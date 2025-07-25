@@ -264,30 +264,20 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
                                     InMemQueryScratch<T> *scratch, bool use_filter = false,
                                     uint32_t filteredLindex = 0);
 
-    // Grid-aware 2D index building: multi-stage neighbor search and pruning
-    void search_for_point_and_prune_2d_grid(int location, std::vector<uint32_t> &pruned_list,
+    // PQ-based Grid-aware index building: multi-stage neighbor search and pruning for high-dimensional vectors
+    void search_for_point_and_prune_pq_grid(int location, std::vector<uint32_t> &pruned_list,
                                             InMemQueryScratch<T> *scratch);
 
-    // Grid-aware 3D index building: multi-stage neighbor search and pruning
-    void search_for_point_and_prune_3d_grid(int location, std::vector<uint32_t> &pruned_list,
-                                            InMemQueryScratch<T> *scratch);
-
-    // Helper functions for grid-aware building
-    void get_grid_neighbors_in_range(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
-                                    std::vector<uint32_t> &candidate_pool, InMemQueryScratch<T> *scratch);
-    
-    // Helper functions for 3D grid-aware building
-    void get_grid_neighbors_in_range_3d(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
+    // Helper functions for PQ grid-aware building
+    void get_pq_grid_neighbors_in_range(uint32_t location, uint32_t min_grid_range, uint32_t max_grid_range,
                                        std::vector<uint32_t> &candidate_pool, InMemQueryScratch<T> *scratch);
     
-    std::pair<uint32_t, uint32_t> get_grid_coordinates(uint32_t location);
-    std::tuple<uint32_t, uint32_t, uint32_t> get_grid_coordinates_3d(uint32_t location);
+    // Get PQ-quantized 2D grid coordinates from high-dimensional vector
+    std::pair<uint8_t, uint8_t> get_pq_grid_coordinates(uint32_t location);
     
-    bool is_in_grid_range(uint32_t grid_x, uint32_t grid_y, uint32_t center_x, uint32_t center_y,
-                         uint32_t min_range, uint32_t max_range);
-    bool is_in_grid_range_3d(uint32_t grid_x, uint32_t grid_y, uint32_t grid_z, 
-                            uint32_t center_x, uint32_t center_y, uint32_t center_z,
-                            uint32_t min_range, uint32_t max_range);
+    // Check if point is in specified grid range (Chebyshev distance)
+    bool is_in_pq_grid_range(uint8_t grid_x, uint8_t grid_y, uint8_t center_x, uint8_t center_y,
+                             uint32_t min_range, uint32_t max_range);
 
     void prune_neighbors(const uint32_t location, std::vector<Neighbor> &pool, std::vector<uint32_t> &pruned_list,
                          InMemQueryScratch<T> *scratch);
@@ -364,6 +354,11 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     // Data
     std::shared_ptr<AbstractDataStore<T>> _data_store;
 
+    // PQ Grid-aware helper functions  
+    void _init_pq_pivots() const;
+    void _compute_pq_grid_coords_cache() const;
+    void _build_grid_to_locations_map() const;
+
     // Graph related data structures
     std::unique_ptr<AbstractGraphStore> _graph_store;
 
@@ -434,6 +429,14 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     std::shared_ptr<AbstractDataStore<T>> _pq_data_store = nullptr;
     bool _pq_generated = false;
     FixedChunkPQTable _pq_table;
+
+    // PQ Grid-aware indexing members
+    mutable std::vector<float> _pq_pivots;  // PQ pivot table for grid quantization
+    mutable bool _pq_pivots_initialized = false;
+    mutable std::vector<std::pair<uint8_t, uint8_t>> _pq_grid_coords_cache;  // Cached PQ grid coordinates for all points
+    mutable bool _pq_grid_coords_cached = false;
+    mutable std::map<std::pair<uint8_t, uint8_t>, std::vector<uint32_t>> _grid_to_locations;  // Grid coordinate -> list of point locations
+    mutable bool _grid_to_locations_built = false;
 
     //
     // Data structures, locks and flags for dynamic indexing and tags
