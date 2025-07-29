@@ -1299,107 +1299,67 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_multistage(int location,
     const std::vector<uint32_t> init_ids = get_init_ids();
     const std::vector<LabelT> unused_filter_label;
     
-    // Get the query vector
-    _data_store->get_vector(location, scratch->aligned_query());
-    
-    // Stage 1: Search for top 64 candidates
+    // Single search to maximum required size
     scratch->clear();
-    iterate_to_fixed_point(scratch, defaults::STAGE1_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
+    _data_store->get_vector(location, scratch->aligned_query());
+    iterate_to_fixed_point(scratch, defaults::STAGE3_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
     
-    auto &pool_stage1 = scratch->pool();
+    auto &all_candidates = scratch->pool();
     
-    // Remove query point from candidates
-    for (uint32_t i = 0; i < pool_stage1.size(); i++)
+    // Remove query point from candidates once
+    for (uint32_t i = 0; i < all_candidates.size(); i++)
     {
-        if (pool_stage1[i].id == (uint32_t)location)
+        if (all_candidates[i].id == (uint32_t)location)
         {
-            pool_stage1.erase(pool_stage1.begin() + i);
+            all_candidates.erase(all_candidates.begin() + i);
             i--;
         }
     }
+    std::sort(all_candidates.begin(), all_candidates.end());
     
     std::vector<uint32_t> final_pruned_list;
     
-    // Prune Stage 1 candidates (rank 1-64)
-    if (!pool_stage1.empty()) {
-        std::vector<uint32_t> stage1_pruned;
-        std::vector<Neighbor> stage1_candidates = pool_stage1;  // Copy for pruning
-        
-        occlude_list(location, stage1_candidates, _indexingAlpha, defaults::STAGE1_MAX_NEIGHBORS,
-                    _indexingMaxC, stage1_pruned, scratch);
-        
-        // Add Stage 1 results to final list
-        final_pruned_list.insert(final_pruned_list.end(), stage1_pruned.begin(), stage1_pruned.end());
-    }
-    
-    // Stage 2: Extend search to top 128 candidates
-    if (pool_stage1.size() < defaults::STAGE2_SEARCH_LIST_SIZE) {
-        scratch->clear();
-        _data_store->get_vector(location, scratch->aligned_query());
-        iterate_to_fixed_point(scratch, defaults::STAGE2_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
-    }
-    
-    auto &pool_stage2 = scratch->pool();
-    
-    // Remove query point from candidates
-    for (uint32_t i = 0; i < pool_stage2.size(); i++)
-    {
-        if (pool_stage2[i].id == (uint32_t)location)
-        {
-            pool_stage2.erase(pool_stage2.begin() + i);
-            i--;
+    // Stage 1: Process rank 1-20 candidates - no pruning, add all edges
+    if (all_candidates.size() > 0) {
+        size_t stage1_end = std::min(static_cast<size_t>(defaults::STAGE1_MAX_NEIGHBORS), all_candidates.size());
+        if (stage1_end > 0) {
+            std::vector<Neighbor> stage1_candidates(all_candidates.begin(), all_candidates.begin() + stage1_end);
+            
+            // No pruning for stage 1, add all candidates directly
+            for (const auto& candidate : stage1_candidates) {
+                final_pruned_list.push_back(candidate.id);
+            }
         }
     }
     
-    // Prune Stage 2 candidates (rank 65-128)
-    if (pool_stage2.size() > defaults::STAGE1_SEARCH_LIST_SIZE) {
-        size_t stage2_start = defaults::STAGE1_SEARCH_LIST_SIZE;
-        size_t stage2_end = std::min(static_cast<size_t>(defaults::STAGE2_SEARCH_LIST_SIZE), pool_stage2.size());
+    // Stage 2: Process rank 21-100 candidates
+    if (all_candidates.size() > defaults::STAGE1_MAX_NEIGHBORS) {
+        size_t stage2_start = defaults::STAGE1_MAX_NEIGHBORS;
+        size_t stage2_end = std::min(static_cast<size_t>(defaults::STAGE2_SEARCH_LIST_SIZE), all_candidates.size());
         
         if (stage2_end > stage2_start) {
-            std::vector<Neighbor> stage2_candidates(pool_stage2.begin() + stage2_start, pool_stage2.begin() + stage2_end);
+            std::vector<Neighbor> stage2_candidates(all_candidates.begin() + stage2_start, all_candidates.begin() + stage2_end);
             std::vector<uint32_t> stage2_pruned;
             
-            occlude_list(location, stage2_candidates, _indexingAlpha, defaults::STAGE2_MAX_NEIGHBORS,
+            occlude_list(location, stage2_candidates, defaults::STAGE2_ALPHA, defaults::STAGE2_MAX_NEIGHBORS,
                         _indexingMaxC, stage2_pruned, scratch);
             
-            // Add Stage 2 results to final list
             final_pruned_list.insert(final_pruned_list.end(), stage2_pruned.begin(), stage2_pruned.end());
         }
     }
     
-    // Stage 3: Extend search to top 256 candidates  
-    if (pool_stage2.size() < defaults::STAGE3_SEARCH_LIST_SIZE) {
-        scratch->clear();
-        _data_store->get_vector(location, scratch->aligned_query());
-        iterate_to_fixed_point(scratch, defaults::STAGE3_SEARCH_LIST_SIZE, init_ids, false, unused_filter_label, false);
-    }
-    
-    auto &pool_stage3 = scratch->pool();
-    
-    // Remove query point from candidates
-    for (uint32_t i = 0; i < pool_stage3.size(); i++)
-    {
-        if (pool_stage3[i].id == (uint32_t)location)
-        {
-            pool_stage3.erase(pool_stage3.begin() + i);
-            i--;
-        }
-    }
-    
-    // Prune Stage 3 candidates (rank 129-256)
-    if (pool_stage3.size() > defaults::STAGE2_SEARCH_LIST_SIZE) {
-        size_t stage3_start = defaults::STAGE2_SEARCH_LIST_SIZE;
-        size_t stage3_end = std::min(static_cast<size_t>(defaults::STAGE3_SEARCH_LIST_SIZE), pool_stage3.size());
+    // Stage 3: Process rank 301-350 candidates
+    if (all_candidates.size() > defaults::STAGE3_START_RANK) {
+        size_t stage3_start = defaults::STAGE3_START_RANK;
+        size_t stage3_end = std::min(static_cast<size_t>(defaults::STAGE3_SEARCH_LIST_SIZE), all_candidates.size());
         
         if (stage3_end > stage3_start) {
-            std::vector<Neighbor> stage3_candidates(pool_stage3.begin() + stage3_start, pool_stage3.begin() + stage3_end);
+            std::vector<Neighbor> stage3_candidates(all_candidates.begin() + stage3_start, all_candidates.begin() + stage3_end);
             std::vector<uint32_t> stage3_pruned;
             
-            occlude_list(location, stage3_candidates, _indexingAlpha, defaults::STAGE3_MAX_NEIGHBORS,
+            occlude_list(location, stage3_candidates, defaults::STAGE3_ALPHA, defaults::STAGE3_MAX_NEIGHBORS,
                         _indexingMaxC, stage3_pruned, scratch);
             
-            // Add Stage 3 results to final list
             final_pruned_list.insert(final_pruned_list.end(), stage3_pruned.begin(), stage3_pruned.end());
         }
     }
@@ -1415,21 +1375,6 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune_multistage(int location,
     
     assert(!pruned_list.empty());
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::link()
 {
@@ -1474,22 +1419,26 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
         std::vector<uint32_t> pruned_list;
         
         // Check if we should use multi-stage ranking-based building
-        if constexpr (std::is_same_v<T, float>)
+        bool use_multistage = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
+        
+        // Debug output to verify multistage usage
+        if (node_ctr == 0) {
+            diskann::cout << "Index build configuration:" << std::endl;
+            diskann::cout << "  _filtered_index: " << _filtered_index << std::endl;
+            diskann::cout << "  _dim: " << _dim << std::endl;
+            diskann::cout << "  use_multistage: " << use_multistage << std::endl;
+            if (use_multistage) {
+                uint32_t multistage_max_neighbors = defaults::STAGE1_MAX_NEIGHBORS + 
+                                                   defaults::STAGE2_MAX_NEIGHBORS + 
+                                                   defaults::STAGE3_MAX_NEIGHBORS;
+                diskann::cout << "  multistage_max_neighbors: " << multistage_max_neighbors << std::endl;
+            }
+            diskann::cout << "  _indexingRange: " << _indexingRange << std::endl;
+        }
+        
+        if (use_multistage)
         {
-            bool use_multistage = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
-            
-            if (use_multistage)
-            {
-                search_for_point_and_prune_multistage(node, pruned_list, scratch);
-            }
-            else if (_filtered_index)
-            {
-                search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
-            }
-            else
-            {
-                search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch);
-            }
+            search_for_point_and_prune_multistage(node, pruned_list, scratch);
         }
         else if (_filtered_index)
         {
@@ -1508,7 +1457,15 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
             assert(_graph_store->get_neighbours((location_t)node).size() <= _indexingRange);
         }
 
-        inter_insert(node, pruned_list, scratch);
+        // Use smaller range for inter_insert when multi-stage building is used
+        if (use_multistage) {
+            uint32_t multistage_max_neighbors = defaults::STAGE1_MAX_NEIGHBORS + 
+                                               defaults::STAGE2_MAX_NEIGHBORS + 
+                                               defaults::STAGE3_MAX_NEIGHBORS;
+            inter_insert(node, pruned_list, multistage_max_neighbors, scratch);
+        } else {
+            inter_insert(node, pruned_list, scratch);
+        }
 
         if (node_ctr % 100000 == 0)
         {
@@ -3151,24 +3108,29 @@ int Index<T, TagT, LabelT>::insert_point(const T *point, const TagT tag, const s
     auto scratch = manager.scratch_space();
     std::vector<uint32_t> pruned_list; // it is the set best candidates to connect to this point
     
-    // Check if we should use PQ-based grid-aware building
-    if constexpr (std::is_same_v<T, float>)
+    // Check if we should use multi-stage ranking-based building
+    bool use_multistage = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
+    
+    // Debug output for dynamic insertion
+    static bool debug_printed = false;
+    if (!debug_printed) {
+        diskann::cout << "Dynamic insertion configuration:" << std::endl;
+        diskann::cout << "  _filtered_index: " << _filtered_index << std::endl;
+        diskann::cout << "  _dim: " << _dim << std::endl;
+        diskann::cout << "  use_multistage: " << use_multistage << std::endl;
+        if (use_multistage) {
+            uint32_t multistage_max_neighbors = defaults::STAGE1_MAX_NEIGHBORS + 
+                                               defaults::STAGE2_MAX_NEIGHBORS + 
+                                               defaults::STAGE3_MAX_NEIGHBORS;
+            diskann::cout << "  multistage_max_neighbors: " << multistage_max_neighbors << std::endl;
+        }
+        diskann::cout << "  _indexingRange: " << _indexingRange << std::endl;
+        debug_printed = true;
+    }
+    
+    if (use_multistage)
     {
-        bool use_multistage = (!_filtered_index && _dim >= 4); // Enable for high-dimensional vectors
-        
-        if (use_multistage)
-        {
-            search_for_point_and_prune_multistage(location, pruned_list, scratch);
-        }
-        else if (_filtered_index)
-        {
-            // when filtered the best_candidates will share the same label ( label_present > distance)
-            search_for_point_and_prune(location, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
-        }
-        else
-        {
-            search_for_point_and_prune(location, _indexingQueueSize, pruned_list, scratch);
-        }
+        search_for_point_and_prune_multistage(location, pruned_list, scratch);
     }
     else if (_filtered_index)
     {
@@ -3204,7 +3166,15 @@ int Index<T, TagT, LabelT>::insert_point(const T *point, const TagT tag, const s
             tlock.unlock();
     }
 
-    inter_insert(location, pruned_list, scratch);
+    // Use smaller range for inter_insert when multi-stage building is used
+    if (use_multistage) {
+        uint32_t multistage_max_neighbors = defaults::STAGE1_MAX_NEIGHBORS + 
+                                           defaults::STAGE2_MAX_NEIGHBORS + 
+                                           defaults::STAGE3_MAX_NEIGHBORS;
+        inter_insert(location, pruned_list, multistage_max_neighbors, scratch);
+    } else {
+        inter_insert(location, pruned_list, scratch);
+    }
 
     return 0;
 }
