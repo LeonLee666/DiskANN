@@ -1270,7 +1270,54 @@ void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pru
                 }
             }
             std::vector<uint32_t> new_out_neighbors;
-            prune_neighbors(des, dummy_pool, new_out_neighbors, scratch);
+            
+            // Sort neighbors by distance to preserve closest ones
+            std::sort(dummy_pool.begin(), dummy_pool.end());
+            
+            // Stage 1: Preserve the closest STAGE1_MAX_NEIGHBORS neighbors
+            uint32_t stage1_count = std::min(static_cast<uint32_t>(defaults::STAGE1_MAX_NEIGHBORS), 
+                                             static_cast<uint32_t>(dummy_pool.size()));
+            
+            // Add Stage 1 neighbors directly (no pruning)
+            for (uint32_t i = 0; i < stage1_count; ++i) {
+                new_out_neighbors.push_back(dummy_pool[i].id);
+            }
+            
+            // Stage 2: Prune neighbors with STAGE2_ALPHA
+            if (dummy_pool.size() > stage1_count) {
+                uint32_t stage2_start = stage1_count;
+                uint32_t stage2_available = dummy_pool.size() - stage1_count;
+                uint32_t stage2_candidates = std::min(stage2_available, static_cast<uint32_t>(defaults::STAGE2_SEARCH_LIST_SIZE));
+                
+                if (stage2_candidates > 0) {
+                    std::vector<Neighbor> stage2_pool(dummy_pool.begin() + stage2_start, 
+                                                      dummy_pool.begin() + stage2_start + stage2_candidates);
+                    std::vector<uint32_t> stage2_pruned;
+                    
+                    prune_neighbors(des, stage2_pool, defaults::STAGE2_MAX_NEIGHBORS, _indexingMaxC, 
+                                    defaults::STAGE2_ALPHA, stage2_pruned, scratch);
+                    new_out_neighbors.insert(new_out_neighbors.end(), stage2_pruned.begin(), stage2_pruned.end());
+                }
+            }
+            
+            // Stage 3: Prune remaining neighbors with STAGE3_ALPHA
+            uint32_t stage3_start = stage1_count + std::min(static_cast<uint32_t>(dummy_pool.size() - stage1_count), 
+                                                            static_cast<uint32_t>(defaults::STAGE2_SEARCH_LIST_SIZE));
+            if (dummy_pool.size() > stage3_start) {
+                uint32_t stage3_available = dummy_pool.size() - stage3_start;
+                uint32_t stage3_candidates = std::min(stage3_available, static_cast<uint32_t>(defaults::STAGE3_SEARCH_LIST_SIZE));
+                
+                if (stage3_candidates > 0) {
+                    std::vector<Neighbor> stage3_pool(dummy_pool.begin() + stage3_start, 
+                                                      dummy_pool.begin() + stage3_start + stage3_candidates);
+                    std::vector<uint32_t> stage3_pruned;
+                    
+                    prune_neighbors(des, stage3_pool, defaults::STAGE3_MAX_NEIGHBORS, _indexingMaxC, 
+                                    defaults::STAGE3_ALPHA, stage3_pruned, scratch);
+                    new_out_neighbors.insert(new_out_neighbors.end(), stage3_pruned.begin(), stage3_pruned.end());
+                }
+            }
+            
             {
                 LockGuard guard(_locks[des]);
 
@@ -1432,6 +1479,11 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
                                                    defaults::STAGE2_MAX_NEIGHBORS + 
                                                    defaults::STAGE3_MAX_NEIGHBORS;
                 diskann::cout << "  multistage_max_neighbors: " << multistage_max_neighbors << std::endl;
+                if (multistage_max_neighbors > _indexingRange) {
+                    diskann::cout << "  WARNING: multistage_max_neighbors (" << multistage_max_neighbors 
+                                  << ") exceeds _indexingRange (" << _indexingRange 
+                                  << "). Using _indexingRange as effective limit." << std::endl;
+                }
             }
             diskann::cout << "  _indexingRange: " << _indexingRange << std::endl;
         }
@@ -1462,7 +1514,9 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
             uint32_t multistage_max_neighbors = defaults::STAGE1_MAX_NEIGHBORS + 
                                                defaults::STAGE2_MAX_NEIGHBORS + 
                                                defaults::STAGE3_MAX_NEIGHBORS;
-            inter_insert(node, pruned_list, multistage_max_neighbors, scratch);
+            // Ensure multistage_max_neighbors doesn't exceed _indexingRange
+            uint32_t effective_range = std::min(multistage_max_neighbors, _indexingRange);
+            inter_insert(node, pruned_list, effective_range, scratch);
         } else {
             inter_insert(node, pruned_list, scratch);
         }
@@ -1500,7 +1554,53 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
                     dummy_visited.insert(cur_nbr);
                 }
             }
-            prune_neighbors(node, dummy_pool, new_out_neighbors, scratch);
+            
+            // Sort neighbors by distance to preserve closest ones
+            std::sort(dummy_pool.begin(), dummy_pool.end());
+            
+            // Stage 1: Preserve the closest STAGE1_MAX_NEIGHBORS neighbors
+            uint32_t stage1_count = std::min(static_cast<uint32_t>(defaults::STAGE1_MAX_NEIGHBORS), 
+                                             static_cast<uint32_t>(dummy_pool.size()));
+            
+            // Add Stage 1 neighbors directly (no pruning)
+            for (uint32_t i = 0; i < stage1_count; ++i) {
+                new_out_neighbors.push_back(dummy_pool[i].id);
+            }
+            
+            // Stage 2: Prune neighbors with STAGE2_ALPHA
+            if (dummy_pool.size() > stage1_count) {
+                uint32_t stage2_start = stage1_count;
+                uint32_t stage2_available = dummy_pool.size() - stage1_count;
+                uint32_t stage2_candidates = std::min(stage2_available, static_cast<uint32_t>(defaults::STAGE2_SEARCH_LIST_SIZE));
+                
+                if (stage2_candidates > 0) {
+                    std::vector<Neighbor> stage2_pool(dummy_pool.begin() + stage2_start, 
+                                                      dummy_pool.begin() + stage2_start + stage2_candidates);
+                    std::vector<uint32_t> stage2_pruned;
+                    
+                    prune_neighbors(node, stage2_pool, defaults::STAGE2_MAX_NEIGHBORS, _indexingMaxC, 
+                                    defaults::STAGE2_ALPHA, stage2_pruned, scratch);
+                    new_out_neighbors.insert(new_out_neighbors.end(), stage2_pruned.begin(), stage2_pruned.end());
+                }
+            }
+            
+            // Stage 3: Prune remaining neighbors with STAGE3_ALPHA
+            uint32_t stage3_start = stage1_count + std::min(static_cast<uint32_t>(dummy_pool.size() - stage1_count), 
+                                                            static_cast<uint32_t>(defaults::STAGE2_SEARCH_LIST_SIZE));
+            if (dummy_pool.size() > stage3_start) {
+                uint32_t stage3_available = dummy_pool.size() - stage3_start;
+                uint32_t stage3_candidates = std::min(stage3_available, static_cast<uint32_t>(defaults::STAGE3_SEARCH_LIST_SIZE));
+                
+                if (stage3_candidates > 0) {
+                    std::vector<Neighbor> stage3_pool(dummy_pool.begin() + stage3_start, 
+                                                      dummy_pool.begin() + stage3_start + stage3_candidates);
+                    std::vector<uint32_t> stage3_pruned;
+                    
+                    prune_neighbors(node, stage3_pool, defaults::STAGE3_MAX_NEIGHBORS, _indexingMaxC, 
+                                    defaults::STAGE3_ALPHA, stage3_pruned, scratch);
+                    new_out_neighbors.insert(new_out_neighbors.end(), stage3_pruned.begin(), stage3_pruned.end());
+                }
+            }
 
             _graph_store->clear_neighbours((location_t)node);
             _graph_store->set_neighbours((location_t)node, new_out_neighbors);
@@ -1546,7 +1646,53 @@ void Index<T, TagT, LabelT>::prune_all_neighbors(const uint32_t max_degree, cons
                     }
                 }
 
-                prune_neighbors((uint32_t)node, dummy_pool, range, maxc, alpha, new_out_neighbors, scratch);
+                // Sort neighbors by distance to preserve closest ones
+                std::sort(dummy_pool.begin(), dummy_pool.end());
+                
+                // Stage 1: Preserve the closest STAGE1_MAX_NEIGHBORS neighbors
+                uint32_t stage1_count = std::min(static_cast<uint32_t>(defaults::STAGE1_MAX_NEIGHBORS), 
+                                                 static_cast<uint32_t>(dummy_pool.size()));
+                
+                // Add Stage 1 neighbors directly (no pruning)
+                for (uint32_t i = 0; i < stage1_count; ++i) {
+                    new_out_neighbors.push_back(dummy_pool[i].id);
+                }
+                
+                // Stage 2: Prune neighbors with STAGE2_ALPHA
+                if (dummy_pool.size() > stage1_count) {
+                    uint32_t stage2_start = stage1_count;
+                    uint32_t stage2_available = dummy_pool.size() - stage1_count;
+                    uint32_t stage2_candidates = std::min(stage2_available, static_cast<uint32_t>(defaults::STAGE2_SEARCH_LIST_SIZE));
+                    
+                    if (stage2_candidates > 0) {
+                        std::vector<Neighbor> stage2_pool(dummy_pool.begin() + stage2_start, 
+                                                          dummy_pool.begin() + stage2_start + stage2_candidates);
+                        std::vector<uint32_t> stage2_pruned;
+                        
+                        prune_neighbors((uint32_t)node, stage2_pool, defaults::STAGE2_MAX_NEIGHBORS, maxc, 
+                                        defaults::STAGE2_ALPHA, stage2_pruned, scratch);
+                        new_out_neighbors.insert(new_out_neighbors.end(), stage2_pruned.begin(), stage2_pruned.end());
+                    }
+                }
+                
+                // Stage 3: Prune remaining neighbors with STAGE3_ALPHA
+                uint32_t stage3_start = stage1_count + std::min(static_cast<uint32_t>(dummy_pool.size() - stage1_count), 
+                                                                static_cast<uint32_t>(defaults::STAGE2_SEARCH_LIST_SIZE));
+                if (dummy_pool.size() > stage3_start) {
+                    uint32_t stage3_available = dummy_pool.size() - stage3_start;
+                    uint32_t stage3_candidates = std::min(stage3_available, static_cast<uint32_t>(defaults::STAGE3_SEARCH_LIST_SIZE));
+                    
+                    if (stage3_candidates > 0) {
+                        std::vector<Neighbor> stage3_pool(dummy_pool.begin() + stage3_start, 
+                                                          dummy_pool.begin() + stage3_start + stage3_candidates);
+                        std::vector<uint32_t> stage3_pruned;
+                        
+                        prune_neighbors((uint32_t)node, stage3_pool, defaults::STAGE3_MAX_NEIGHBORS, maxc, 
+                                        defaults::STAGE3_ALPHA, stage3_pruned, scratch);
+                        new_out_neighbors.insert(new_out_neighbors.end(), stage3_pruned.begin(), stage3_pruned.end());
+                    }
+                }
+
                 _graph_store->clear_neighbours((location_t)node);
                 _graph_store->set_neighbours((location_t)node, new_out_neighbors);
             }
@@ -3123,6 +3269,11 @@ int Index<T, TagT, LabelT>::insert_point(const T *point, const TagT tag, const s
                                                defaults::STAGE2_MAX_NEIGHBORS + 
                                                defaults::STAGE3_MAX_NEIGHBORS;
             diskann::cout << "  multistage_max_neighbors: " << multistage_max_neighbors << std::endl;
+            if (multistage_max_neighbors > _indexingRange) {
+                diskann::cout << "  WARNING: multistage_max_neighbors (" << multistage_max_neighbors 
+                              << ") exceeds _indexingRange (" << _indexingRange 
+                              << "). Using _indexingRange as effective limit." << std::endl;
+            }
         }
         diskann::cout << "  _indexingRange: " << _indexingRange << std::endl;
         debug_printed = true;
@@ -3171,7 +3322,9 @@ int Index<T, TagT, LabelT>::insert_point(const T *point, const TagT tag, const s
         uint32_t multistage_max_neighbors = defaults::STAGE1_MAX_NEIGHBORS + 
                                            defaults::STAGE2_MAX_NEIGHBORS + 
                                            defaults::STAGE3_MAX_NEIGHBORS;
-        inter_insert(location, pruned_list, multistage_max_neighbors, scratch);
+        // Ensure multistage_max_neighbors doesn't exceed _indexingRange
+        uint32_t effective_range = std::min(multistage_max_neighbors, _indexingRange);
+        inter_insert(location, pruned_list, effective_range, scratch);
     } else {
         inter_insert(location, pruned_list, scratch);
     }
