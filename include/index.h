@@ -190,6 +190,10 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
 
     DISKANN_DLLEXPORT void count_nodes_at_bfs_levels();
 
+    // Setter methods for indexing parameters
+    DISKANN_DLLEXPORT void set_alpha2(float alpha2);
+    DISKANN_DLLEXPORT void set_split_ratio(float split_ratio);
+
     // This variable MUST be updated if the number of entries in the metadata
     // change.
     DISKANN_DLLEXPORT static const int METADATA_ROWS = 5;
@@ -270,6 +274,9 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     void prune_neighbors(const uint32_t location, std::vector<Neighbor> &pool, const uint32_t range,
                          const uint32_t max_candidate_size, const float alpha, std::vector<uint32_t> &pruned_list,
                          InMemQueryScratch<T> *scratch);
+
+    void prune_neighbors_two_phase(const uint32_t location, std::vector<Neighbor> &pool,
+                                   std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch);
 
     // Prunes candidates in @pool to a shorter list @result
     // @pool must be sorted before calling
@@ -394,6 +401,8 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     uint32_t _indexingRange;
     uint32_t _indexingMaxC;
     float _indexingAlpha;
+    float _alpha2;
+    float _splitRatio;
     uint32_t _indexingThreads;
 
     // Query scratch data structures

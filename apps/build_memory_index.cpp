@@ -26,7 +26,7 @@ int main(int argc, char **argv)
 {
     std::string data_type, dist_fn, data_path, index_path_prefix, label_file, universal_label, label_type;
     uint32_t num_threads, R, L, Lf, build_PQ_bytes;
-    float alpha;
+    float alpha, alpha2, split_ratio;
     bool use_pq_build, use_opq;
 
     po::options_description desc{
@@ -57,6 +57,10 @@ int main(int argc, char **argv)
                                        program_options_utils::GRAPH_BUILD_COMPLEXITY);
         optional_configs.add_options()("alpha", po::value<float>(&alpha)->default_value(1.2f),
                                        program_options_utils::GRAPH_BUILD_ALPHA);
+        optional_configs.add_options()("alpha2", po::value<float>(&alpha2)->default_value(0.6f),
+                                       "Alpha value for second phase pruning (default: 0.6)");
+        optional_configs.add_options()("split_ratio", po::value<float>(&split_ratio)->default_value(0.7f),
+                                       "Split ratio for two-phase pruning (default: 0.7)");
         optional_configs.add_options()("build_PQ_bytes", po::value<uint32_t>(&build_PQ_bytes)->default_value(0),
                                        program_options_utils::BUIlD_GRAPH_PQ_BYTES);
         optional_configs.add_options()("use_opq", po::bool_switch()->default_value(false),
@@ -115,6 +119,7 @@ int main(int argc, char **argv)
     try
     {
         diskann::cout << "Starting index build with R: " << R << "  Lbuild: " << L << "  alpha: " << alpha
+                      << "  alpha2: " << alpha2 << "  split_ratio: " << split_ratio 
                       << "  #threads: " << num_threads << std::endl;
 
         size_t data_num, data_dim;
@@ -150,6 +155,38 @@ int main(int argc, char **argv)
 
         auto index_factory = diskann::IndexFactory(config);
         auto index = index_factory.create_instance();
+        
+        // Set additional indexing parameters through dynamic cast to Index type
+        if (data_type == "float")
+        {
+            auto typed_index = dynamic_cast<diskann::Index<float>*>(index.get());
+            if (typed_index) {
+                typed_index->set_alpha2(alpha2);
+                typed_index->set_split_ratio(split_ratio);
+            }
+        }
+        else if (data_type == "uint8")
+        {
+            auto typed_index = dynamic_cast<diskann::Index<uint8_t>*>(index.get());
+            if (typed_index) {
+                typed_index->set_alpha2(alpha2);
+                typed_index->set_split_ratio(split_ratio);
+            }
+        }
+        else if (data_type == "int8")
+        {
+            auto typed_index = dynamic_cast<diskann::Index<int8_t>*>(index.get());
+            if (typed_index) {
+                typed_index->set_alpha2(alpha2);
+                typed_index->set_split_ratio(split_ratio);
+            }
+        }
+        
+        else
+        {
+            diskann::cout << "Warning: Data type '" << data_type << "' not supported for setting alpha2/split_ratio parameters. Using default values." << std::endl;
+        }
+        
         index->build(data_path, data_num, filter_params);
         index->save(index_path_prefix.c_str());
         index.reset();

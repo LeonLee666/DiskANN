@@ -98,6 +98,8 @@ Index<T, TagT, LabelT>::Index(const IndexConfig &index_config, std::shared_ptr<A
         _indexingRange = index_config.index_write_params->max_degree;
         _indexingMaxC = index_config.index_write_params->max_occlusion_size;
         _indexingAlpha = index_config.index_write_params->alpha;
+        _alpha2 = defaults::ALPHA2;
+        _splitRatio = defaults::SPLIT_RATIO;
         _filterIndexingQueueSize = index_config.index_write_params->filter_list_size;
         _indexingThreads = index_config.index_write_params->num_threads;
         _saturate_graph = index_config.index_write_params->saturate_graph;
@@ -1172,6 +1174,73 @@ void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vecto
 }
 
 template <typename T, typename TagT, typename LabelT>
+void Index<T, TagT, LabelT>::prune_neighbors_two_phase(const uint32_t location, std::vector<Neighbor> &pool,
+                                                       std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch)
+{
+    if (pool.size() == 0)
+    {
+        pruned_list.clear();
+        return;
+    }
+
+    // If using _pq_build, over-write the PQ distances with actual distances
+    if (_pq_dist)
+    {
+        for (auto &ngh : pool)
+            ngh.distance = _data_store->get_distance(ngh.id, location);
+    }
+
+    // Sort the pool based on distance to query
+    std::sort(pool.begin(), pool.end());
+    pruned_list.clear();
+    pruned_list.reserve(_indexingRange);
+
+    // Two-phase strategy: split pool into two equal halves
+    if (pool.size() <= 2)
+    {
+        // If pool is too small, just return all nodes
+        for (const auto &neighbor : pool)
+        {
+            pruned_list.push_back(neighbor.id);
+        }
+        return;
+    }
+    
+    // Split pool into two equal halves
+    size_t half_size = pool.size() / 2;
+    
+    // Phase 1: Apply alpha pruning to first half
+    std::vector<Neighbor> first_half_pool(pool.begin(), pool.begin() + half_size);
+    std::vector<uint32_t> first_phase_result;
+    first_phase_result.reserve(_indexingRange);
+    
+    // Use _indexingAlpha for first phase, with max degree = _indexingRange
+    occlude_list(location, first_half_pool, _indexingAlpha, _indexingRange, _indexingMaxC, first_phase_result, scratch);
+    
+    // Add phase 1 results
+    pruned_list.insert(pruned_list.end(), first_phase_result.begin(), first_phase_result.end());
+    
+    // Phase 2: Apply alpha2 pruning to second half
+    if (pruned_list.size() < _indexingRange && half_size < pool.size())
+    {
+        uint32_t remaining_slots = _indexingRange - static_cast<uint32_t>(pruned_list.size());
+        
+        std::vector<Neighbor> second_half_pool(pool.begin() + half_size, pool.end());
+        std::vector<uint32_t> second_phase_result;
+        second_phase_result.reserve(remaining_slots);
+        
+        // Use _alpha2 for second phase, with max degree = remaining slots
+        occlude_list(location, second_half_pool, _alpha2, remaining_slots, _indexingMaxC, second_phase_result, scratch);
+        
+        // Add phase 2 results
+        pruned_list.insert(pruned_list.end(), second_phase_result.begin(), second_phase_result.end());
+    }
+    
+    
+    assert(pruned_list.size() <= _indexingRange);
+}
+
+template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vector<Neighbor> &pool, const uint32_t range,
                                              const uint32_t max_candidate_size, const float alpha,
                                              std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch)
@@ -1365,7 +1434,10 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
             std::vector<Neighbor> dummy_pool(0);
             std::vector<uint32_t> new_out_neighbors;
 
-            for (auto cur_nbr : _graph_store->get_neighbours((location_t)node))
+            // Step 1: Add direct neighbors
+            std::vector<uint32_t> direct_neighbors = _graph_store->get_neighbours((location_t)node);
+            
+            for (auto cur_nbr : direct_neighbors)
             {
                 if (dummy_visited.find(cur_nbr) == dummy_visited.end() && cur_nbr != node)
                 {
@@ -1374,7 +1446,27 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
                     dummy_visited.insert(cur_nbr);
                 }
             }
-            prune_neighbors(node, dummy_pool, new_out_neighbors, scratch);
+
+            // Step 2: Add neighbors of neighbors (all neighbors without distance condition)
+            for (auto direct_nbr : direct_neighbors)
+            {
+                if (direct_nbr != node)
+                {
+                    for (auto second_level_nbr : _graph_store->get_neighbours((location_t)direct_nbr))
+                    {
+                        if (dummy_visited.find(second_level_nbr) == dummy_visited.end() && 
+                            second_level_nbr != node)
+                        {
+                            float second_level_dist = _data_store->get_distance(node, second_level_nbr);
+                            dummy_pool.emplace_back(Neighbor(second_level_nbr, second_level_dist));
+                            dummy_visited.insert(second_level_nbr);
+                        }
+                    }
+                }
+            }
+
+            // Step 3: Use new two-phase prune algorithm
+            prune_neighbors_two_phase(node, dummy_pool, new_out_neighbors, scratch);
 
             _graph_store->clear_neighbours((location_t)node);
             _graph_store->set_neighbours((location_t)node, new_out_neighbors);
@@ -3192,6 +3284,17 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
     }
 
     delete[] bfs_sets;
+}
+
+// Setter methods for indexing parameters
+template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::set_alpha2(float alpha2)
+{
+    _alpha2 = alpha2;
+}
+
+template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::set_split_ratio(float split_ratio)
+{
+    _splitRatio = split_ratio;
 }
 
 // REFACTOR: This should be an OptimizedDataStore class
